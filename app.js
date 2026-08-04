@@ -46,7 +46,7 @@ runBtn.onclick=async()=>{
       showToast(`后端返回 ${res.status}，请检查服务`);
     }
   }catch(e){
-    showToast('简报已生成，将推送至 PushPlus');
+    showToast('无法连接推送服务，请确认后端正在运行');
   }finally{
     runBtn.disabled=false;
     runState.textContent=originalState;
