@@ -7,7 +7,6 @@
 import json
 import os
 import time
-from datetime import datetime
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -84,7 +83,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         payload = {
             "token": token,
-            "title": f"章鱼 AI·全景分析 · {datetime.now():%m-%d}",
+            "title": "章鱼 AI·全景分析",
             "content": content,
             "template": "html",
         }
