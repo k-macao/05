@@ -1,2 +1,4 @@
 .venv/
 pushplus_record.json
+__pycache__/
+*.pyc
