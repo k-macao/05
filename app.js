@@ -5,8 +5,13 @@ const toast=document.querySelector('#toast');
 const countEl=document.querySelector('.source-count');
 const runBtn=document.querySelector('#runBtn');
 const runState=runBtn.querySelector('.run-state');
+const refreshBtn=document.querySelector('#refreshBtn');
+const lastRefreshEl=document.querySelector('#lastRefresh');
+const statSourcesEl=document.querySelector('#statSources');
 
 function showToast(text){toast.textContent=text;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600)}
+
+function updateRefreshTime(){if(lastRefreshEl){const now=new Date();lastRefreshEl.textContent=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;}}
 
 function renderSources(sources){
   if(!sources||!sources.length) return;
@@ -29,6 +34,7 @@ function renderSources(sources){
     if(res.ok){const data=await res.json();if(Array.isArray(data)&&data.length)sources=data;}
   }catch(e){/* 后端未接入时忽略 */ }
   renderSources(sources);
+  if(statSourcesEl) statSourcesEl.textContent=sources.length;
 })();
 
 // 手动运行：调用后端 /api/run 完成聚合、AI 总结与 PushPlus 推送，失败则回退到本地演示逻辑。
@@ -55,4 +61,9 @@ runBtn.onclick=async()=>{
 document.querySelector('#addSource').onclick=()=>showToast('栏目接口已就绪 · 可添加 RSS / API 来源');
 document.querySelector('#manageSources').onclick=()=>showToast('进入来源管理');
 document.querySelector('#editSchedule').onclick=()=>showToast('可编辑每日 12:30 / 19:30 推送时间');document.querySelector('#expandBtn').onclick=()=>showToast('正在展开 AI 分析与延展');
+if(refreshBtn)refreshBtn.onclick=()=>{updateRefreshTime();showToast('数据已刷新');};
+const deliverySettingsBtn=document.querySelector('#deliverySettings');
+if(deliverySettingsBtn)deliverySettingsBtn.onclick=()=>showToast('打开 PushPlus 推送配置');
+// Schedule toggle persistence
+document.querySelectorAll('.switch input[data-toggle]').forEach(input=>{const key='schedule_'+input.dataset.toggle;const saved=localStorage.getItem(key);if(saved!==null)input.checked=saved==='1';input.onchange=()=>{localStorage.setItem(key,input.checked?'1':'0');showToast(input.checked?'已开启推送':'已关闭推送');};});
 let seconds=3*3600+28*60+16;setInterval(()=>{seconds=Math.max(0,seconds-1);const h=String(Math.floor(seconds/3600)).padStart(2,'0'),m=String(Math.floor(seconds%3600/60)).padStart(2,'0'),s=String(seconds%60).padStart(2,'0');document.querySelector('.countdown').textContent=`还有 ${h}:${m}:${s}`},1000);
