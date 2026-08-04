@@ -6,20 +6,35 @@
 """
 import json
 import os
+import time
+from datetime import datetime
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import sources
+
 ROOT = Path(__file__).resolve().parent
 # 推送地址可用环境变量覆盖，默认走真实 PushPlus；测试时指向本地假服务。
 PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
-SOURCES = [
-    "MKTNews 快讯", "华尔街见闻 快讯", "华尔街见闻最新", "华尔街见闻 最热",
-    "财联社 电报", "财联社 深度", "财联社 热门", "雪球 热门股票",
-    "格隆汇 事件", "法布财经 快讯", "法布财经 头条", "金十数据",
-]
+SOURCES = sources.SOURCES
+
+# /api/brief 的结果缓存（抓取 12 个源较慢，5 分钟内不重复抓取）。
+_BRIEF_CACHE = {"at": 0.0, "data": None}
+_BRIEF_TTL = 300
+
+
+def get_brief():
+    """抓取并缓存全量简报数据：{name: [item, ...]}。"""
+    now = time.time()
+    if _BRIEF_CACHE["data"] is not None and now - _BRIEF_CACHE["at"] < _BRIEF_TTL:
+        return _BRIEF_CACHE["data"]
+    data = sources.collect_all()
+    _BRIEF_CACHE["at"] = now
+    _BRIEF_CACHE["data"] = data
+    return data
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -39,8 +54,15 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path.split("?", 1)[0] == "/api/sources":
+        path = self.path.split("?", 1)[0]
+        if path == "/api/sources":
             return self.send_json(HTTPStatus.OK, SOURCES)
+        if path == "/api/brief":
+            try:
+                brief = get_brief()
+            except Exception as error:  # 抓取异常也返回可用结果
+                brief = {"error": str(error)}
+            return self.send_json(HTTPStatus.OK, brief)
         return super().do_GET()
 
     def do_POST(self):
@@ -53,10 +75,17 @@ class Handler(SimpleHTTPRequestHandler):
                 "message": "服务端未配置 PUSHPLUS_TOKEN，未执行推送。"
             })
 
+        # 真实抓取 12 个数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
+        try:
+            brief = get_brief()
+        except Exception:
+            brief = sources.collect_all()
+        content = sources.build_html(brief)
+
         payload = {
             "token": token,
-            "title": "章鱼 AI·全景分析",
-            "content": "今日简报已生成。请在章鱼 AI·全景分析服务中接入聚合与 AI 摘要内容。",
+            "title": f"章鱼 AI·全景分析 · {datetime.now():%m-%d}",
+            "content": content,
             "template": "html",
         }
         topic = os.environ.get("PUSHPLUS_TOPIC")
