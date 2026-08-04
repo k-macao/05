@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
+# 推送地址可用环境变量覆盖，默认走真实 PushPlus；测试时指向本地假服务。
+PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
 SOURCES = [
     "MKTNews 快讯", "华尔街见闻 快讯", "华尔街见闻最新", "华尔街见闻 最热",
     "财联社 电报", "财联社 深度", "财联社 热门", "雪球 热门股票",
@@ -62,7 +64,7 @@ class Handler(SimpleHTTPRequestHandler):
             payload["topic"] = topic
         try:
             request = Request(
-                "https://www.pushplus.plus/send",
+                PUSHPLUS_API_URL,
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}, method="POST",
             )

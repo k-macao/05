@@ -1,5 +1,9 @@
 const fallbackSources=['MKTNews 快讯','华尔街见闻 快讯','华尔街见闻最新','华尔街见闻 最热','财联社 电报','财联社 深度','财联社 热门','雪球 热门股票','格隆汇 事件','法布财经 快讯','法布财经 头条','金十数据'];
 const stockWords=['股票','深度','热门','事件'];
+// github.io（GitHub Pages）是纯静态托管：POST /api/run 必然 405，
+// 定时/手动推送由 GitHub Actions 完成，按钮在此环境下改为跳转 Actions。
+const isGithubPages=location.hostname.endsWith('.github.io');
+const ACTIONS_URL='https://github.com/k-macao/05/actions/workflows/daily-push.yml';
 const list=document.querySelector('#sourceList');
 const toast=document.querySelector('#toast');
 const countEl=document.querySelector('.source-count');
@@ -27,29 +31,39 @@ function renderSources(sources){
 }
 
 // 优先从后端拉取来源列表，后端不可用时回退到内置来源，保证纯静态预览仍可运行。
+// 注意用相对路径：github.io 项目页部署在 /05/ 子路径下，绝对路径会打到错误的主机根。
 (async function loadSources(){
   let sources=fallbackSources;
   try{
-    const res=await fetch('/api/sources');
+    const res=await fetch('api/sources');
     if(res.ok){const data=await res.json();if(Array.isArray(data)&&data.length)sources=data;}
   }catch(e){/* 后端未接入时忽略 */ }
   renderSources(sources);
   if(statSourcesEl) statSourcesEl.textContent=sources.length;
 })();
 
-// 手动运行：调用后端 /api/run 完成聚合、AI 总结与 PushPlus 推送，失败则回退到本地演示逻辑。
+// 手动运行：调用后端 /api/run 完成聚合、AI 总结与 PushPlus 推送；github.io 静态托管下改为跳转 Actions 手动触发。
 runBtn.onclick=async()=>{
+  if(isGithubPages){
+    showToast('GitHub Pages 为纯静态托管，已打开 Actions 手动触发每日推送');
+    window.open(ACTIONS_URL,'_blank');
+    return;
+  }
   const originalState=runState.textContent;
   runBtn.disabled=true;
   runState.textContent='运行中…';
   showToast('正在聚合内容并生成 AI 简报…');
   try{
-    const res=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'}});
+    const res=await fetch('api/run',{method:'POST',headers:{'Content-Type':'application/json'}});
     if(res.ok){
       const data=await res.json();
       showToast((data&&data.message)||'简报已生成，将推送至 PushPlus');
     }else{
-      showToast(`后端返回 ${res.status}，请检查服务`);
+      // 优先展示服务端返回的真实原因（如 503 未配置 token），静态托管等场景下 405 给出明确指引。
+      let message=null;
+      try{const data=await res.json();if(data&&data.message)message=data.message;}catch(e){/* 非 JSON 错误体 */ }
+      if(res.status===405) message='当前页面由静态托管提供，不支持 POST /api/run，请改用 server.py 启动服务';
+      showToast(message||`后端返回 ${res.status}，请检查服务`);
     }
   }catch(e){
     showToast('无法连接推送服务，请确认后端正在运行');
