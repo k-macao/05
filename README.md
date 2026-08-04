@@ -15,4 +15,11 @@
 python3 -m http.server 4173 --bind 0.0.0.0
 ```
 
-后续接入时建议将 `app.js` 中的来源列表替换为后端 `/api/sources`，手动运行调用 `/api/run`，定时任务由服务端 cron/APScheduler 触发，AI 总结和 PushPlus 推送放在服务端完成，避免将 token 暴露在浏览器。
+## 后端接口对接
+
+前端已通过 `fetch` 对接后端，并内置回退逻辑：后端不可用时自动使用本地演示数据，纯静态预览仍可运行。
+
+- **`GET /api/sources`** — 返回来源名称数组，如 `["财联社 电报", ...]`，前端据此渲染来源列表。
+- **`POST /api/run`** — 手动触发一次聚合、AI 总结与 PushPlus 推送，返回 `{ "message": "..." }`。
+
+定时任务由服务端 cron/APScheduler 触发；AI 总结和 PushPlus 推送放在服务端完成，避免将 token 暴露在浏览器。实现时保证上述两个接口即可，无需改动前端。
