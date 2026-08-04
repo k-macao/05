@@ -22,7 +22,7 @@ PUSHPLUS_TOKEN=你的_PushPlus_token python3 server.py
 
 GitHub Pages 是**纯静态托管**，无法运行 `server.py`，`POST /api/run` 必然返回 **405**——这是平台限制，不是代码问题。因此 github.io 上的推送改由 **GitHub Actions** 完成：
 
-- **定时推送**：`.github/workflows/daily-push.yml` 每天 04:30 / 11:30 UTC（即北京时间 **12:30 / 19:30**）执行 `push_brief.py` 调用 PushPlus。首次部署请把 `PUSHPLUS_TOKEN`（可选 `PUSHPLUS_TOPIC`）加入仓库 **Settings → Secrets and variables → Actions**。
+- **定时推送**：每天 04:30 / 11:30 UTC（即北京时间 **12:30 / 19:30**）执行 `push_brief.py` 调用 PushPlus。工作流文件内容在 **`docs/daily-push.workflow.yml`**——由于本仓库的自动化机器人没有 GitHub 的 `workflows` 权限，无法直接创建 `.github/workflows/` 文件，请合并 PR 后手动创建：把 `docs/daily-push.workflow.yml` 的内容粘贴到 `.github/workflows/daily-push.yml`（或用 GitHub 网页新建文件）。随后把 `PUSHPLUS_TOKEN`（可选 `PUSHPLUS_TOPIC`）加入仓库 **Settings → Secrets and variables → Actions**。
 - **手动触发**：页面「立即运行一次」在 github.io 环境下会自动跳转到 Actions 工作流页面，点 **Run workflow** 即可手动推送一次（`workflow_dispatch`）。
 - 定时任务只在**默认分支（main）**生效：合并 PR 到 main 后即开始按计划执行。
 
