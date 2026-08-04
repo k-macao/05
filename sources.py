@@ -250,28 +250,101 @@ def _trunc(s: str, n: int = 60) -> str:
 
 
 def build_html(brief: dict, now: datetime | None = None) -> str:
-    """把 {name: [item,...]} 渲染成可推送的 HTML 简报。"""
+    """把简报渲染成适合 PushPlus / 微信阅读的卡片式 HTML。
+
+    PushPlus 的 HTML 会直接进入微信内置浏览器，不能依赖本站 CSS 或脚本。
+    因此这里坚持：所有样式内联、宽度始终 100%、内容可断行、使用 table
+    作为条目布局，并避免微信容易吞掉的外部字体、定位和复杂动画。
+    """
     now = now or datetime.now()
-    blocks = []
-    total = sum(len(items) for items in brief.values())
-    for meta in SOURCE_META:
-        items = brief.get(meta["name"], [])
-        lis = "".join(
-            f"<li>{_trunc(it['title'])}"
-            + (f" <a href='{_esc(it['url'])}'>[原文]</a>" if it.get("url") else "")
-            + "</li>"
-            for it in items
+    # 克莱因蓝作为主色，灰色只用于层级较低的辅助文字；样式全部内联，
+    # 确保 PushPlus 转发到微信后仍保持同一套排版。
+    blue = "#002FA7"
+    ink = "#173A83"
+    secondary = "#5D76A9"
+    light_blue = "#EDF2FF"
+    page = "#F2F3F5"
+    line = "#E3E8F1"
+    total = sum(len(items or []) for items in brief.values())
+
+    source_cards = []
+    for index, meta in enumerate(SOURCE_META, 1):
+        items = brief.get(meta["name"], []) or []
+        rows = []
+        for item_index, item in enumerate(items, 1):
+            title = _trunc(str(item.get("title", "")), 100)
+            url = item.get("url") or ""
+            title_html = (
+                f"<a href=\"{_esc(url)}\" style=\"color:{blue};text-decoration:none;\">"
+                f"{title}</a>"
+                if url else title
+            )
+            border = f"border-bottom:1px solid {line};" if item_index < len(items) else ""
+            rows.append(
+                "<tr>"
+                f"<td width=\"24\" valign=\"top\" style=\"width:24px;padding:10px 8px 10px 0;{border}"
+                f"color:{blue};font-size:12px;line-height:1.6;\">{item_index:02d}</td>"
+                f"<td valign=\"top\" style=\"padding:10px 0;{border}color:{ink};font-size:14px;"
+                f"line-height:1.7;word-break:break-all;overflow-wrap:anywhere;\">{title_html}</td>"
+                "</tr>"
+            )
+        if not rows:
+            rows.append(
+                f"<tr><td style=\"padding:10px 0;color:{secondary};font-size:13px;\">"
+                "暂未抓取到内容</td></tr>"
+            )
+        source_cards.append(
+            f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
+            f"border=\"0\" style=\"width:100%;margin:0 0 12px;background:#FFFFFF;border:1px solid {line};"
+            f"border-radius:12px;\"><tr><td style=\"padding:14px 14px 4px;\">"
+            f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
+            f"border=\"0\"><tr><td style=\"color:{blue};font-size:16px;font-weight:700;line-height:1.45;"
+            f"word-break:break-all;\">{index:02d} · {_esc(meta['name'])}</td>"
+            f"<td align=\"right\" valign=\"top\" style=\"padding-left:8px;white-space:nowrap;"
+            f"color:{blue};font-size:11px;line-height:1.8;\">{len(items)} 条</td></tr></table>"
+            f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
+            f"border=\"0\" style=\"width:100%;\">{''.join(rows)}</table>"
+            "</td></tr></table>"
         )
-        blocks.append(
-            f"<p><b>{_esc(meta['name'])}</b>（{len(items)} 条）</p><ul>{lis}</ul>"
-        )
+
     return (
-        f"<h3>{now:%Y-%m-%d %H:%M} · 章鱼 AI·全景分析</h3>"
-        f"<p><b>今日一句话：</b>市场风险偏好回升，<b>AI 算力与电网投资</b>仍是资金聚焦主线，"
-        "但短期需警惕高位分化。</p>"
-        f"<p><b>覆盖 {len(SOURCE_META)} 个数据源 · 共 {total} 条快讯：</b></p>"
-        + "".join(blocks)
-        + '<p style="color:#888">数据仅供参考，不构成投资建议</p>'
+        f"<div style=\"width:100%;max-width:100%;margin:0;padding:16px 12px 24px;box-sizing:border-box;"
+        f"background:{page};color:{ink};font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',"
+        f"'Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:anywhere;\">"
+        f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
+        f"style=\"width:100%;margin:0 0 12px;background:#FFFFFF;border:1px solid {line};border-radius:12px;\">"
+        f"<tr><td style=\"padding:20px 16px 16px;\">"
+        f"<div style=\"margin:0 0 9px;color:{blue};font-size:11px;line-height:1.4;letter-spacing:1px;\">"
+        "AI INFORMATION BRIEF</div>"
+        f"<div style=\"margin:0;color:{blue};font-size:25px;font-weight:700;line-height:1.35;"
+        f"letter-spacing:-.5px;\">章鱼 AI·全景分析</div>"
+        f"<div style=\"margin:8px 0 0;color:{secondary};font-size:12px;line-height:1.5;\">"
+        f"{now:%Y年%m月%d日 %H:%M} 更新 · 覆盖 {len(SOURCE_META)} 个数据源 · 每日两次推送</div>"
+        "</td></tr></table>"
+        f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
+        f"style=\"width:100%;margin:0 0 12px;background:#FFFFFF;border:1px solid {line};border-left:3px solid {blue};"
+        f"border-radius:12px;\"><tr><td style=\"padding:16px;\">"
+        f"<div style=\"margin:0 0 7px;color:{secondary};font-size:12px;line-height:1.4;\">今日一句话</div>"
+        f"<div style=\"margin:0;color:{ink};font-size:16px;line-height:1.8;word-break:break-all;\">"
+        f"市场风险偏好回升，<span style=\"color:{blue};font-weight:700;background:{light_blue};\">"
+        "AI 算力与电网投资</span>仍是资金聚焦主线，但短期需警惕高位分化。</div>"
+        f"<div style=\"margin:12px 0 0;color:{blue};font-size:11px;line-height:1.4;\">"
+        "偏多　·　科技 / 能源</div>"
+        "</td></tr></table>"
+        f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
+        f"style=\"width:100%;margin:0 0 12px;background:{light_blue};border:1px solid #DCE6FF;border-radius:12px;\">"
+        f"<tr><td align=\"center\" style=\"width:33.33%;padding:12px 4px;color:{blue};font-size:20px;"
+        f"font-weight:700;line-height:1.3;\">{len(SOURCE_META)}<br><span style=\"color:{secondary};font-size:11px;"
+        f"font-weight:400;\">数据源</span></td>"
+        f"<td align=\"center\" style=\"width:33.33%;padding:12px 4px;color:{blue};font-size:20px;"
+        f"font-weight:700;line-height:1.3;border-left:1px solid #DCE6FF;border-right:1px solid #DCE6FF;\">"
+        f"{total}<br><span style=\"color:{secondary};font-size:11px;font-weight:400;\">条快讯</span></td>"
+        f"<td align=\"center\" style=\"width:33.33%;padding:12px 4px;color:{blue};font-size:20px;"
+        f"font-weight:700;line-height:1.3;\">2<br><span style=\"color:{secondary};font-size:11px;"
+        f"font-weight:400;\">今日推送</span></td></tr></table>"
+        + "".join(source_cards)
+        + f"<div style=\"padding:4px 4px 0;color:{secondary};font-size:11px;line-height:1.7;text-align:center;\">"
+        "数据仅供参考，不构成投资建议</div></div>"
     )
 
 

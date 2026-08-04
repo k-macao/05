@@ -38,7 +38,7 @@ def main():
 
     payload = {
         "token": token,
-        "title": f"章鱼 AI·全景分析 · {datetime.now():%m-%d}",
+        "title": "章鱼 AI·全景分析",
         "content": build_content(datetime.now()),
         "template": "html",
     }
