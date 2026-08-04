@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""本地/容器运行的早晚报 API 与静态文件服务。
+"""本地/容器运行的章鱼 AI·全景分析 API 与静态文件服务。
 
 启动：PUSHPLUS_TOKEN=... python3 server.py
 可选：PORT=4173、PUSHPLUS_TOPIC=xxx
@@ -53,8 +53,8 @@ class Handler(SimpleHTTPRequestHandler):
 
         payload = {
             "token": token,
-            "title": "早晚报 · AI 信息雷达",
-            "content": "今日简报已生成。请在早晚报服务中接入聚合与 AI 摘要内容。",
+            "title": "章鱼 AI·全景分析",
+            "content": "今日简报已生成。请在章鱼 AI·全景分析服务中接入聚合与 AI 摘要内容。",
             "template": "html",
         }
         topic = os.environ.get("PUSHPLUS_TOPIC")
@@ -88,5 +88,5 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "4173"))
-    print(f"Serving 早晚报 at http://0.0.0.0:{port}")
+    print(f"Serving 章鱼 AI·全景分析 at http://0.0.0.0:{port}")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
