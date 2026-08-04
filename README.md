@@ -37,10 +37,20 @@ PUSHPLUS_TOKEN=你的_PushPlus_token python3 server.py
 
 `python -m http.server` 只是静态服务器，无法处理 `POST /api/run`（历史 405 的来源之一）。
 
+## 12 个数据源真实抓取（sources.py）
+
+`server.py` 与 `push_brief.py` 现在会**真实抓取 12 个数据源**，而非发送占位文案：
+
+- `sources.py` 内置 12 个源的元信息（源头站 + 聚合通道）与抓取/解析逻辑，零第三方依赖（仅标准库）。
+- 华尔街见闻 / 雪球 / 金十 / 法布等站点为 **JS 渲染/需登录**，直连只能拿到空壳，因此先走公开热榜聚合通道 rebang.vip（服务端渲染，标题与链接均回指源头原文）；聚合通道失败时回退源头站直连，再不行回退内置演示数据，保证任何环境都能出简报。
+- 每个源默认取 **10 条**，多源会转发同一事件，接后端时可做去重。
+- 完整抓取结果示例见 `docs/12数据源抓取结果.md`。
+
 ## 后端接口约定（server.py 本地开发用）
 
 - **`GET /api/sources`** — 返回来源名称数组。
-- **`POST /api/run`** — 使用 `PUSHPLUS_TOKEN` 调用 PushPlus；未配置 token 时明确返回 503，不会伪造“已推送”。
+- **`GET /api/brief`** — 抓取并返回 12 个数据源的全量简报数据 `{name: [item,...]}`（带 5 分钟缓存）。
+- **`POST /api/run`** — 真实抓取 12 个数据源、生成 HTML 简报后调用 PushPlus 推送；未配置 token 时明确返回 503，不会伪造“已推送”。
 - **`OPTIONS /api/*`** — 返回 CORS 预检响应。
 
 `PUSHPLUS_TOKEN` 只保留在服务端环境变量/仓库 Secrets 中，绝不能写进前端文件或提交到 Git。

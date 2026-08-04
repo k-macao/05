@@ -15,23 +15,19 @@ from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import sources
+
 API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
-SOURCES = [
-    "MKTNews 快讯", "华尔街见闻 快讯", "华尔街见闻最新", "华尔街见闻 最热",
-    "财联社 电报", "财联社 深度", "财联社 热门", "雪球 热门股票",
-    "格隆汇 事件", "法布财经 快讯", "法布财经 头条", "金十数据",
-]
+SOURCES = sources.SOURCES
 
 
 def build_content(now):
-    sources_html = "".join(f"<li>{name}</li>" for name in SOURCES)
-    return (
-        f"<h3>{now:%Y-%m-%d} · 章鱼 AI·全景分析</h3>"
-        "<p><b>今日一句话：</b>市场风险偏好回升，<b>AI 算力与电网投资</b>仍是资金聚焦主线，"
-        "但短期需警惕高位分化。</p>"
-        "<p><b>覆盖 {n} 个数据源：</b></p><ul>{sources}</ul>"
-        "<p style=\"color:#888\">数据仅供参考，不构成投资建议</p>"
-    ).format(n=len(SOURCES), sources=sources_html)
+    """真实抓取 12 个数据源并渲染 HTML 简报（网络不可用时自动回退内置演示数据）。"""
+    try:
+        brief = sources.collect_all()
+    except Exception:
+        brief = {}
+    return sources.build_html(brief, now=now)
 
 
 def main():
