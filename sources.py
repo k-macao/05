@@ -28,6 +28,8 @@ from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import ai_analyzer
+
 TIMEOUT = 8
 LIMIT = 10            # 每个源默认取前 10 条
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -216,7 +218,8 @@ def _demo_items(name: str) -> list:
 
 
 def collect_one(name: str, limit: int = LIMIT) -> list:
-    """抓取单个源：聚合通道 → 源头站(未内置) → 内置演示数据兜底。"""
+    """抓取单个源：聚合通道 → 源头站(未内置) → 内置演示数据兜底。
+    每条抓取结果自动附加 AI 分析（利好/利空、板块、市场、周期）。"""
     meta = next((m for m in SOURCE_META if m["name"] == name), None)
     if not meta:
         return []
@@ -224,11 +227,11 @@ def collect_one(name: str, limit: int = LIMIT) -> list:
     try:
         items = _parse_channel(meta["channel"], meta["origin"], limit)
         if items:
-            return items
+            return ai_analyzer.analyze_items(items)
     except (HTTPError, URLError, TimeoutError, ValueError):
         pass
     # 2) 演示数据兜底
-    return _demo_items(name)
+    return ai_analyzer.analyze_items(_demo_items(name))
 
 
 def collect_all(limit: int = LIMIT) -> dict:
@@ -267,6 +270,13 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
     line = "#E3E8F1"
     total = sum(len(items or []) for items in brief.values())
 
+    # AI 分析标签配色
+    _sentiment_cfg = {
+        "利好": {"color": "#16a34a", "bg": "#f0fdf4", "icon": "▲"},
+        "利空": {"color": "#dc2626", "bg": "#fef2f2", "icon": "▼"},
+        "中性": {"color": "#9333ea", "bg": "#faf5ff", "icon": "●"},
+    }
+
     source_cards = []
     for index, meta in enumerate(SOURCE_META, 1):
         items = brief.get(meta["name"], []) or []
@@ -280,12 +290,44 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
                 if url else title
             )
             border = f"border-bottom:1px solid {line};" if item_index < len(items) else ""
+
+            # ---- AI 分析标签 ----
+            analysis = item.get("analysis")
+            analysis_html = ""
+            if analysis:
+                sentiment = analysis.get("sentiment", "中性")
+                sectors = analysis.get("sectors", [])
+                market = analysis.get("market", "—")
+                timeframe = analysis.get("timeframe", "短期")
+                scfg = _sentiment_cfg.get(sentiment, _sentiment_cfg["中性"])
+
+                sector_text = "、".join(sectors[:2]) if sectors else "综合"
+
+                analysis_html = (
+                    f"<div style=\"margin:4px 0 2px;display:flex;flex-wrap:wrap;gap:4px;\">"
+                    # 利好/利空 + 板块
+                    f"<span style=\"display:inline-block;font-size:10px;line-height:1.4;"
+                    f"padding:2px 6px;border-radius:4px;color:{scfg['color']};"
+                    f"background:{scfg['bg']};\">"
+                    f"{scfg['icon']} {sentiment}{sector_text}</span>"
+                    # 市场
+                    f"<span style=\"display:inline-block;font-size:10px;line-height:1.4;"
+                    f"padding:2px 6px;border-radius:4px;color:#0369a1;background:#f0f9ff;\">"
+                    f"{_esc(market)}</span>"
+                    # 周期
+                    f"<span style=\"display:inline-block;font-size:10px;line-height:1.4;"
+                    f"padding:2px 6px;border-radius:4px;color:#92400e;background:#fffbeb;\">"
+                    f"{timeframe}影响</span>"
+                    f"</div>"
+                )
+
             rows.append(
                 "<tr>"
                 f"<td width=\"24\" valign=\"top\" style=\"width:24px;padding:10px 8px 10px 0;{border}"
                 f"color:{blue};font-size:12px;line-height:1.6;\">{item_index:02d}</td>"
                 f"<td valign=\"top\" style=\"padding:10px 0;{border}color:{ink};font-size:14px;"
-                f"line-height:1.7;word-break:break-all;overflow-wrap:anywhere;\">{title_html}</td>"
+                f"line-height:1.7;word-break:break-all;overflow-wrap:anywhere;\">"
+                f"{title_html}{analysis_html}</td>"
                 "</tr>"
             )
         if not rows:
