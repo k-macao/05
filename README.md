@@ -16,17 +16,34 @@
 PUSHPLUS_TOKEN=你的_PushPlus_token python3 server.py
 ```
 
-## 后端接口对接
+## 部署到 GitHub Pages（github.io）
 
-前端以相对路径调用服务端 API。此前项目只用静态服务器/静态托管部署，静态服务器不支持 `POST`，所以点击“立即运行一次”会收到 **405 Method Not Allowed**；这不是 PushPlus 的响应，推送请求还没有发出。
+本项目已启用 GitHub Pages：**https://k-macao.github.io/05/**（来源：`main` 分支根目录）。
 
-仓库现在提供了零依赖的 `server.py`：它同时提供页面和 API，避免浏览器跨域与静态服务器的 405。`PUSHPLUS_TOKEN` 只保留在服务端环境变量中，绝不能写进前端文件或提交到 Git。
+GitHub Pages 是**纯静态托管**，无法运行 `server.py`，`POST /api/run` 必然返回 **405**——这是平台限制，不是代码问题。因此 github.io 上的推送改由 **GitHub Actions** 完成：
+
+- **定时推送**：`.github/workflows/daily-push.yml` 每天 04:30 / 11:30 UTC（即北京时间 **12:30 / 19:30**）执行 `push_brief.py` 调用 PushPlus。首次部署请把 `PUSHPLUS_TOKEN`（可选 `PUSHPLUS_TOPIC`）加入仓库 **Settings → Secrets and variables → Actions**。
+- **手动触发**：页面「立即运行一次」在 github.io 环境下会自动跳转到 Actions 工作流页面，点 **Run workflow** 即可手动推送一次（`workflow_dispatch`）。
+- 定时任务只在**默认分支（main）**生效：合并 PR 到 main 后即开始按计划执行。
+
+> 注意：前端请求一律使用**相对路径**（`api/sources`），因为 github.io 项目页挂在 `/05/` 子路径下。
+
+## 本地预览（带后端，可选）
+
+```bash
+# server.py 同时提供页面与 API；仅本地/自有服务器开发时使用，github.io 用不到它。
+PUSHPLUS_TOKEN=你的_PushPlus_token python3 server.py
+```
+
+`python -m http.server` 只是静态服务器，无法处理 `POST /api/run`（历史 405 的来源之一）。
+
+## 后端接口约定（server.py 本地开发用）
 
 - **`GET /api/sources`** — 返回来源名称数组。
 - **`POST /api/run`** — 使用 `PUSHPLUS_TOKEN` 调用 PushPlus；未配置 token 时明确返回 503，不会伪造“已推送”。
 - **`OPTIONS /api/*`** — 返回 CORS 预检响应。
 
-页面资源带有版本查询参数，且服务端对 `index.html` 使用 `no-store`，以避免预览/CDN 继续展示旧 index。部署时请用 `python3 server.py` 作为启动命令、暴露 `PORT`，并在部署平台的机密环境变量中设置 `PUSHPLUS_TOKEN`。
+`PUSHPLUS_TOKEN` 只保留在服务端环境变量/仓库 Secrets 中，绝不能写进前端文件或提交到 Git。
 
 ## 手动推送联调测试（无需真实 token / 外网）
 
