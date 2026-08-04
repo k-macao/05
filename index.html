@@ -3,38 +3,61 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="早晚报 · AI 信息雷达 — 每天两次，自动聚合市场重要信息，AI 一句话总结，为你的投资决策节省时间。" />
+  <meta name="theme-color" content="#102746" />
   <title>早晚报 · AI 信息雷达</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260804" />
+  <link rel="stylesheet" href="styles.css?v=20260805" />
 </head>
 <body>
   <main class="phone-shell">
     <header class="topbar">
       <div class="brand"><span class="brand-mark">◈</span><span>早晚报</span></div>
-      <button class="icon-btn" aria-label="设置">⚙</button>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="refreshBtn" aria-label="刷新数据">↻</button>
+        <button class="icon-btn" id="settingsBtn" aria-label="设置">⚙</button>
+      </div>
     </header>
+
+    <div class="status-bar" id="statusBar" role="status" aria-live="polite">
+      <span class="status-dot ok"></span>
+      <span>数据源正常 · 上次刷新 <time id="lastRefresh">刚刚</time></span>
+    </div>
 
     <section class="hero">
       <div class="eyebrow"><span class="live-dot"></span> AI 信息雷达 · 已连接</div>
       <h1>把市场噪音，<br><em>变成一句话。</em></h1>
       <p class="hero-copy">每天两次，自动聚合重要信息<br>为你的投资决策节省时间。</p>
-      <div class="next-run"><span>下一次推送</span><strong>今天 19:30</strong><span class="countdown">还有 03:28:16</span></div>
+      <div class="next-run"><span>下一次推送</span><strong>今天 19:30</strong><span class="countdown" id="countdown">还有 03:28:16</span></div>
+      <div class="quick-stats">
+        <div class="stat"><b id="statSources">12</b><small>数据源</small></div>
+        <div class="stat"><b id="statFeeds">42</b><small>今日快讯</small></div>
+        <div class="stat"><b id="statAlerts">3</b><small>重点关注</small></div>
+      </div>
     </section>
 
     <section class="section schedule-section">
       <div class="section-head"><div><span class="kicker">DAILY BRIEF</span><h2>推送计划</h2></div><button class="text-btn" id="editSchedule">编辑</button></div>
       <div class="schedule-card">
-        <div class="time-row active"><div class="time-icon">☼</div><div><b>午间简报</b><small>工作日 · 12:30</small></div><label class="switch"><input type="checkbox" checked><span></span></label></div>
+        <div class="time-row active" data-schedule="noon"><div class="time-icon">☼</div><div><b>午间简报</b><small>工作日 · 12:30</small></div><label class="switch" aria-label="午间简报开关"><input type="checkbox" checked data-toggle="noon"><span></span></label></div>
         <div class="divider"></div>
-        <div class="time-row"><div class="time-icon moon">◐</div><div><b>晚间简报</b><small>每天 · 19:30</small></div><label class="switch"><input type="checkbox" checked><span></span></label></div>
+        <div class="time-row" data-schedule="evening"><div class="time-icon moon">◐</div><div><b>晚间简报</b><small>每天 · 19:30</small></div><label class="switch" aria-label="晚间简报开关"><input type="checkbox" checked data-toggle="evening"><span></span></label></div>
       </div>
-      <button class="run-btn" id="runBtn"><span class="play">▶</span><span>立即运行一次</span><span class="run-state">手动触发</span></button>
+      <button class="run-btn" id="runBtn" aria-label="立即运行一次"><span class="play">▶</span><span>立即运行一次</span><span class="run-state">手动触发</span></button>
     </section>
 
     <section class="section">
       <div class="section-head"><div><span class="kicker">AI INSIGHT</span><h2>今日一句话</h2></div><span class="ai-pill">✦ AI 已分析</span></div>
-      <article class="insight-card"><div class="quote-mark">“</div><p>市场风险偏好回升，<mark>AI 算力与电网投资</mark>仍是资金聚焦主线，但短期需警惕高位分化。</p><div class="insight-foot"><span>基于 42 条快讯 · 19:12 更新</span><button class="arrow-btn" id="expandBtn">↗</button></div></article>
+      <article class="insight-card" id="insightCard">
+        <div class="quote-mark">"</div>
+        <p id="insightText">市场风险偏好回升，<mark>AI 算力与电网投资</mark>仍是资金聚焦主线，但短期需警惕高位分化。</p>
+        <div class="insight-meta">
+          <span class="meta-tag" id="sentimentTag">偏多</span>
+          <span class="meta-tag neutral" id="sectorTag">科技·能源</span>
+        </div>
+        <div class="insight-foot"><span id="insightSource">基于 42 条快讯 · <time id="insightTime">19:12</time> 更新</span><button class="arrow-btn" id="expandBtn" aria-label="展开 AI 分析">↗</button></div>
+      </article>
     </section>
 
     <section class="section sources-section">
@@ -45,11 +68,15 @@
 
     <section class="section delivery-section">
       <div class="section-head"><div><span class="kicker">DELIVERY</span><h2>推送设置</h2></div><span class="connected"><i></i> 已连接</span></div>
-      <div class="delivery-card"><div class="push-icon">P</div><div><b>PushPlus</b><small>推送至微信 · 每日两次</small></div><button class="chevron">›</button></div>
+      <div class="delivery-card"><div class="push-icon">P</div><div><b>PushPlus</b><small>推送至微信 · 每日两次</small></div><button class="chevron" id="deliverySettings" aria-label="推送设置详情">›</button></div>
+      <div class="delivery-subs">
+        <div class="sub-item"><span class="sub-icon">👥</span><div><b>订阅者</b><small id="subCount">1 人已订阅</small></div></div>
+        <div class="sub-item"><span class="sub-icon">📊</span><div><b>推送统计</b><small>今日已推 2 次</small></div></div>
+      </div>
     </section>
     <footer>早晚报 · 专注重要信息<br><span>数据仅供参考，不构成投资建议</span></footer>
   </main>
   <div class="toast" id="toast">正在生成今日简报…</div>
-  <script src="app.js?v=20260804"></script>
+  <script src="app.js?v=20260805"></script>
 </body>
 </html>
