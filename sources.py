@@ -7,7 +7,7 @@
   直接 GET 只能拿到空壳，无法解析出条目。
 - 因此每个源同时记录“源头站”(origin) 与一个公开的**热榜聚合通道** rebang.vip
   （该聚合页为服务端渲染，标题与链接均回指源头站原文，是稳定的抓取通道）。
-- 新增 6 个热搜/热点源（知乎、抖音、微博、虎扑、AI Hot、联合早报）来自
+- 新增 6 个热搜/热点源（知乎、抖音、微博、虎扑、AI Hot、Google news 中文）来自
   ourongxing/newsnow 项目，使用直接 API / HTML 抓取。
 - 抓取顺序：自定义收集器 / 聚合通道 → 内置演示数据兜底，
   保证任何环境（本地 / GitHub Pages / GitHub Actions）都能稳定出结果。
@@ -26,6 +26,7 @@ import html
 import json
 import re
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
@@ -58,7 +59,7 @@ SOURCE_META = [
     {"name": "微博实时热搜",    "collector": "weibo"},
     {"name": "虎扑热搜",        "collector": "hupu"},
     {"name": "AI Hot",          "collector": "aihot"},
-    {"name": "联合早报",        "collector": "zaobao"},
+    {"name": "Google news 中文", "collector": "google_news"},
 ]
 
 SOURCES = [m["name"] for m in SOURCE_META]
@@ -162,6 +163,11 @@ _DEMO = {
         "夏天就要吃西瓜",
         "旅行推荐 避暑胜地",
         "职场新人避坑指南",
+        "抖音电商新趋势",
+        "周杰伦演唱会门票抢购",
+        "如何在家做冰镇咖啡",
+        "自驾游路线推荐",
+        "职场高效办公插件",
     ],
     "微博实时热搜": [
         "高考成绩陆续公布",
@@ -169,6 +175,11 @@ _DEMO = {
         "暑期档电影推荐",
         "高温预警 注意防暑",
         "国足世预赛最新战报",
+        "杭州亚运会筹备进展",
+        "SpaceX 发射最新进展",
+        "苹果发布会预测",
+        "今日影讯早知道",
+        "专家谈年轻人理财",
     ],
     "虎扑热搜": [
         "NBA 总决赛 G7 赛后讨论",
@@ -184,12 +195,12 @@ _DEMO = {
         "开源大模型 Llama 4 发布",
         "AI 编程助手效率对比评测",
     ],
-    "联合早报": [
-        "中美经贸高层会谈在日内瓦举行",
-        "东南亚国家联盟峰会聚焦区域经济",
-        "新加坡推出新一轮经济刺激计划",
-        "全球气候变化会议最新进展",
-        "亚太地区科技投资趋势分析",
+    "Google news 中文": [
+        "全球科技巨头发布财报，AI 支出超预期",
+        "亚太股市周一开盘走势分化",
+        "美联储会议纪要暗示通胀路径仍存不确定性",
+        "新能源汽车全球销量创历史新高",
+        "全球气候峰会达成初步减排协议",
     ],
 }
 
@@ -427,32 +438,22 @@ def _collect_aihot(limit: int) -> list:
     return items
 
 
-def _collect_zaobao(limit: int) -> list:
-    """联合早报 - 通过早晨报聚合，需要 gb2312 解码。"""
-    url = "https://www.zaochenbao.com/realtime/"
-    req = Request(url, headers={"User-Agent": UA}, method="GET")
-    with urlopen(req, timeout=TIMEOUT) as resp:
-        raw_bytes = resp.read()
-    # gb2312 解码
-    raw = raw_bytes.decode("gb2312", "replace")
-    # 解析 <div class="list-block"><a class="item" href="...">...</a></div>
-    parser = LinkCollector()
-    parser.feed(raw)
-    items = []
-    base = "https://www.zaochenbao.com"
-    seen = set()
-    for href, text in parser.links:
-        if "list-block" not in str(href) and href.startswith("/"):
-            # 这是联合早报的文章链接
-            if href in seen:
-                continue
-            seen.add(href)
-            title = _collapse(text)
-            if title:
-                items.append({"title": title, "url": base + href})
-                if len(items) >= limit:
-                    break
-    return items
+def _collect_google_news(limit: int) -> list:
+    """Google News 中文 - RSS 抓取。"""
+    url = "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    try:
+        raw = _fetch(url)
+        # Google News RSS 含有 XML 声明，ET.fromstring 可以处理字符串
+        root = ET.fromstring(raw)
+        items = []
+        for item in root.findall(".//item")[:limit]:
+            title = item.find("title").text
+            link = item.find("link").text
+            if title and link:
+                items.append({"title": title, "url": link})
+        return items
+    except Exception:
+        return []
 
 
 # 收集器函数映射表
@@ -462,7 +463,7 @@ _COLLECTORS = {
     "weibo": _collect_weibo,
     "hupu": _collect_hupu,
     "aihot": _collect_aihot,
-    "zaobao": _collect_zaobao,
+    "google_news": _collect_google_news,
 }
 
 
@@ -502,7 +503,10 @@ def collect_all(limit: int = LIMIT) -> dict:
     """依次抓取全部 18 个源。返回 {name: [item, ...]}。"""
     result = {}
     for meta in SOURCE_META:
-        result[meta["name"]] = collect_one(meta["name"], limit)
+        cur_limit = limit
+        if meta["name"] in ["抖音热搜", "微博实时热搜"]:
+            cur_limit = 10
+        result[meta["name"]] = collect_one(meta["name"], cur_limit)
     return result
 
 
