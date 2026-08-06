@@ -25,4 +25,4 @@ jobs:
       - name: 执行推送
         env:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
- run: python push_brief.py
+        run: python push_brief.py
