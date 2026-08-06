@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""章鱼 AI·全景分析 —— 12 个数据源抓取采集器（零第三方依赖，仅标准库）。
+"""章鱼 AI·全景分析 —— 18 个数据源抓取采集器（零第三方依赖，仅标准库）。
 
 为什么这么设计
 ------------
@@ -7,26 +7,30 @@
   直接 GET 只能拿到空壳，无法解析出条目。
 - 因此每个源同时记录“源头站”(origin) 与一个公开的**热榜聚合通道** rebang.vip
   （该聚合页为服务端渲染，标题与链接均回指源头站原文，是稳定的抓取通道）。
-- 抓取顺序：先试聚合通道（经验证可用）→ 源头站直连 → 内置演示数据兜底，
+- 新增 6 个热搜/热点源（知乎、抖音、微博、虎扑、AI Hot、联合早报）来自
+  ourongxing/newsnow 项目，使用直接 API / HTML 抓取。
+- 抓取顺序：自定义收集器 / 聚合通道 → 内置演示数据兜底，
   保证任何环境（本地 / GitHub Pages / GitHub Actions）都能稳定出结果。
 
 对外接口
 --------
-    SOURCES            : 12 个源的名称列表（与前端 /api/sources、推送保持一致）
-    SOURCE_META        : 每个源的元信息（name / origin / channel / demo）
-    collect_all()      : 依次抓取全部 12 个源，返回 {name: [item, ...]}
+    SOURCES            : 18 个源的名称列表（与前端 /api/sources、推送保持一致）
+    SOURCE_META        : 每个源的元信息（name / origin / channel / collector）
+    collect_all()      : 依次抓取全部 18 个源，返回 {name: [item, ...]}
     collect_one(name)  : 抓取单个源，返回 [item, ...]
     build_html(brief)  : 由采集结果生成可推送给 PushPlus 的 HTML 简报
 """
 from __future__ import annotations
 
 import html
+import json
 import re
 import time
 from datetime import datetime
 from html.parser import HTMLParser
+from http.cookiejar import CookieJar
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
 
 TIMEOUT = 8
 LIMIT = 10            # 每个源默认取前 10 条
@@ -48,6 +52,13 @@ SOURCE_META = [
     {"name": "法布财经 快讯",    "origin": "fastbull.com",           "channel": "https://www.rebang.vip/fabubaijiance/hot-express"},
     {"name": "法布财经 头条",    "origin": "fastbull.com",           "channel": "https://www.rebang.vip/fabubaijiance/hot-news"},
     {"name": "金十数据",        "origin": "jin10.com",              "channel": "https://www.rebang.vip/jinshishuju/hot-list"},
+    # --- 新增 6 个热搜/热点源（来自 ourongxing/newsnow 项目）---
+    {"name": "知乎热榜",        "collector": "zhihu"},
+    {"name": "抖音热搜",        "collector": "douyin"},
+    {"name": "微博实时热搜",    "collector": "weibo"},
+    {"name": "虎扑热搜",        "collector": "hupu"},
+    {"name": "AI Hot",          "collector": "aihot"},
+    {"name": "联合早报",        "collector": "zaobao"},
 ]
 
 SOURCES = [m["name"] for m in SOURCE_META]
@@ -138,6 +149,48 @@ _DEMO = {
         "诺和诺德：2026年第二季度调整后销售额784.9亿丹麦克朗、营业利润333.9亿",
         "“美联储传声筒”：贝森特政策反应函数转向不再那么鸽派",
     ],
+    "知乎热榜": [
+        "如何看待 2026 年高考录取分数线公布？",
+        "为什么现在的年轻人越来越喜欢独居？",
+        "有哪些让你觉得「涨知识了」的冷知识？",
+        "如何评价电影《奥本海默》？",
+        "你经历过的最离谱的骗局是什么？",
+    ],
+    "抖音热搜": [
+        "高考加油 为梦想而战",
+        "今日份好消息分享",
+        "夏天就要吃西瓜",
+        "旅行推荐 避暑胜地",
+        "职场新人避坑指南",
+    ],
+    "微博实时热搜": [
+        "高考成绩陆续公布",
+        "某明星官宣结婚",
+        "暑期档电影推荐",
+        "高温预警 注意防暑",
+        "国足世预赛最新战报",
+    ],
+    "虎扑热搜": [
+        "NBA 总决赛 G7 赛后讨论",
+        "欧冠决赛精彩回顾",
+        "步行街主干道 今日热议",
+        "球鞋发售日历 8月新款",
+        "电竞 S赛 战队分析",
+    ],
+    "AI Hot": [
+        "OpenAI 发布 GPT-5 技术预览版",
+        "Anthropic Claude 4 性能基准测试",
+        "Google DeepMind 新论文：多模态推理",
+        "开源大模型 Llama 4 发布",
+        "AI 编程助手效率对比评测",
+    ],
+    "联合早报": [
+        "中美经贸高层会谈在日内瓦举行",
+        "东南亚国家联盟峰会聚焦区域经济",
+        "新加坡推出新一轮经济刺激计划",
+        "全球气候变化会议最新进展",
+        "亚太地区科技投资趋势分析",
+    ],
 }
 
 
@@ -215,24 +268,238 @@ def _demo_items(name: str) -> list:
     return [{"title": t, "url": ""} for t in _DEMO.get(name, [])]
 
 
+# ---------------------------------------------------------------- 新增 6 个源的抓取器
+# 这些源使用直接 API / HTML 抓取（参考 ourongxing/newsnow 项目实现）
+
+def _collect_zhihu(limit: int) -> list:
+    """知乎热榜 - 直接 API 抓取。"""
+    url = "https://www.zhihu.com/api/v3/feed/topstory/hot-list-web?limit=20&desktop=true"
+    req = Request(url, headers={"User-Agent": UA}, method="GET")
+    with urlopen(req, timeout=TIMEOUT) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    items = []
+    for k in data.get("data", [])[:limit]:
+        target = k.get("target", {})
+        title = target.get("title_area", {}).get("text", "")
+        link = target.get("link", {}).get("url", "")
+        if title:
+            items.append({"title": title, "url": link})
+    return items
+
+
+def _collect_douyin(limit: int) -> list:
+    """抖音热搜 - 需要先获取 cookie。"""
+    # 先从 login.douyin.com 获取 cookie
+    cookie_jar = CookieJar()
+    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    try:
+        opener.open("https://login.douyin.com/", timeout=TIMEOUT)
+    except (HTTPError, URLError, TimeoutError):
+        return []
+    
+    # 用获取的 cookie 请求热搜 API
+    url = "https://www.douyin.com/aweme/v1/web/hot/search/list/?device_platform=webapp&aid=6383&channel=channel_pc_web&detail_list=1"
+    req = Request(url, headers={"User-Agent": UA}, method="GET")
+    try:
+        with opener.open(req, timeout=TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError):
+        return []
+    
+    items = []
+    for k in data.get("data", {}).get("word_list", [])[:limit]:
+        word = k.get("word", "")
+        sentence_id = k.get("sentence_id", "")
+        if word and sentence_id:
+            items.append({
+                "title": word,
+                "url": f"https://www.douyin.com/hot/{sentence_id}"
+            })
+    return items
+
+
+class WeiboTableParser(HTMLParser):
+    """解析微博热搜表格。"""
+    def __init__(self):
+        super().__init__()
+        self._in_table = False
+        self._in_tbody = False
+        self._in_tr = False
+        self._in_td_02 = False
+        self._in_a = False
+        self._current_href = None
+        self._current_text = []
+        self.items = []
+    
+    def handle_starttag(self, tag, attrs):
+        d = dict(attrs)
+        if tag == "table":
+            self._in_table = True
+        elif tag == "tbody" and self._in_table:
+            self._in_tbody = True
+        elif tag == "tr" and self._in_tbody:
+            self._in_tr = True
+        elif tag == "td" and self._in_tr:
+            cls = d.get("class", "")
+            if "td-02" in cls:
+                self._in_td_02 = True
+        elif tag == "a" and self._in_td_02:
+            href = d.get("href", "")
+            if href and "javascript:void(0);" not in href:
+                self._in_a = True
+                self._current_href = href
+                self._current_text = []
+    
+    def handle_data(self, data):
+        if self._in_a:
+            self._current_text.append(data)
+    
+    def handle_endtag(self, tag):
+        if tag == "a" and self._in_a:
+            title = "".join(self._current_text).strip()
+            if title and self._current_href:
+                url = f"https://s.weibo.com{self._current_href}"
+                self.items.append({"title": title, "url": url})
+            self._in_a = False
+            self._current_href = None
+            self._current_text = []
+        elif tag == "td" and self._in_td_02:
+            self._in_td_02 = False
+        elif tag == "tr" and self._in_tr:
+            self._in_tr = False
+        elif tag == "tbody" and self._in_tbody:
+            self._in_tbody = False
+        elif tag == "table" and self._in_table:
+            self._in_table = False
+
+
+def _collect_weibo(limit: int) -> list:
+    """微博实时热搜 - HTML 表格解析。"""
+    url = "https://s.weibo.com/top/summary?cate=realtimehot"
+    req = Request(url, headers={
+        "User-Agent": UA,
+        "Cookie": "SUB=_2AkMWIuNSf8NxqwJRmP8dy2rhaoV2ygrEieKgfhKJJRMxHRl-yT9jqk86tRB6PaLNvQZR6zYUcYVT1zSjoSreQHidcUq7",
+        "Referer": url,
+    }, method="GET")
+    with urlopen(req, timeout=TIMEOUT) as resp:
+        raw = resp.read().decode("utf-8", "replace")
+    parser = WeiboTableParser()
+    parser.feed(raw)
+    return parser.items[:limit]
+
+
+def _collect_hupu(limit: int) -> list:
+    """虎扑热搜 - 正则表达式匹配。"""
+    url = "https://bbs.hupu.com/topic-daily-hot"
+    raw = _fetch(url)
+    # 匹配 <li class="bbs-sl-web-post-body"> 中的 <a href="..." class="p-title">title</a>
+    regex = re.compile(
+        r'<li class="bbs-sl-web-post-body">[\s\S]*?'
+        r'<a href="(/[^"]+?\.html)"[^>]*?class="p-title"[^>]*>([^<]+)</a>'
+    )
+    items = []
+    for match in regex.finditer(raw):
+        path, title = match.groups()
+        if path and title:
+            items.append({
+                "title": title.strip(),
+                "url": f"https://bbs.hupu.com{path}"
+            })
+            if len(items) >= limit:
+                break
+    return items
+
+
+def _collect_aihot(limit: int) -> list:
+    """AI Hot - JSON API 抓取。"""
+    url = "https://aihot.virxact.com/api/public/items?mode=all&take=30"
+    req = Request(url, headers={
+        "User-Agent": f"{UA} aihot-skill/0.2.0 newsnow/0.0.40"
+    }, method="GET")
+    with urlopen(req, timeout=TIMEOUT) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    items = []
+    for item in data.get("items", [])[:limit]:
+        title = item.get("title", "")
+        link = item.get("url", "")
+        if title and link:
+            items.append({"title": title, "url": link})
+    return items
+
+
+def _collect_zaobao(limit: int) -> list:
+    """联合早报 - 通过早晨报聚合，需要 gb2312 解码。"""
+    url = "https://www.zaochenbao.com/realtime/"
+    req = Request(url, headers={"User-Agent": UA}, method="GET")
+    with urlopen(req, timeout=TIMEOUT) as resp:
+        raw_bytes = resp.read()
+    # gb2312 解码
+    raw = raw_bytes.decode("gb2312", "replace")
+    # 解析 <div class="list-block"><a class="item" href="...">...</a></div>
+    parser = LinkCollector()
+    parser.feed(raw)
+    items = []
+    base = "https://www.zaochenbao.com"
+    seen = set()
+    for href, text in parser.links:
+        if "list-block" not in str(href) and href.startswith("/"):
+            # 这是联合早报的文章链接
+            if href in seen:
+                continue
+            seen.add(href)
+            title = _collapse(text)
+            if title:
+                items.append({"title": title, "url": base + href})
+                if len(items) >= limit:
+                    break
+    return items
+
+
+# 收集器函数映射表
+_COLLECTORS = {
+    "zhihu": _collect_zhihu,
+    "douyin": _collect_douyin,
+    "weibo": _collect_weibo,
+    "hupu": _collect_hupu,
+    "aihot": _collect_aihot,
+    "zaobao": _collect_zaobao,
+}
+
+
 def collect_one(name: str, limit: int = LIMIT) -> list:
-    """抓取单个源：聚合通道 → 源头站(未内置) → 内置演示数据兜底。"""
+    """抓取单个源：自定义收集器 / 聚合通道 → 演示数据兜底。"""
     meta = next((m for m in SOURCE_META if m["name"] == name), None)
     if not meta:
         return []
-    # 1) 聚合通道（经验证可用，JS 站点的可靠抓取途径）
-    try:
-        items = _parse_channel(meta["channel"], meta["origin"], limit)
-        if items:
-            return items
-    except (HTTPError, URLError, TimeoutError, ValueError):
-        pass
-    # 2) 演示数据兜底
+    
+    # 新增的 6 个源使用自定义收集器
+    if "collector" in meta:
+        collector_name = meta["collector"]
+        collector_func = _COLLECTORS.get(collector_name)
+        if collector_func:
+            try:
+                items = collector_func(limit)
+                if items:
+                    return items
+            except (HTTPError, URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
+                pass
+        return _demo_items(name)
+    
+    # 原有的 12 个源使用聚合通道
+    if "channel" in meta:
+        try:
+            items = _parse_channel(meta["channel"], meta["origin"], limit)
+            if items:
+                return items
+        except (HTTPError, URLError, TimeoutError, ValueError):
+            pass
+    
+    # 演示数据兜底
     return _demo_items(name)
 
 
 def collect_all(limit: int = LIMIT) -> dict:
-    """依次抓取全部 12 个源。返回 {name: [item, ...]}。"""
+    """依次抓取全部 18 个源。返回 {name: [item, ...]}。"""
     result = {}
     for meta in SOURCE_META:
         result[meta["name"]] = collect_one(meta["name"], limit)

@@ -51,16 +51,18 @@ class ParseChannelTest(unittest.TestCase):
 
 
 class SourceDefinitionTest(unittest.TestCase):
-    def test_twelve_sources(self):
-        self.assertEqual(len(sources.SOURCES), 12)
-        self.assertEqual(len(sources.SOURCE_META), 12)
+    def test_eighteen_sources(self):
+        self.assertEqual(len(sources.SOURCES), 18)
+        self.assertEqual(len(sources.SOURCE_META), 18)
         names = [m["name"] for m in sources.SOURCE_META]
         self.assertEqual(names, sources.SOURCES)
 
-    def test_every_source_has_origin_and_channel(self):
+    def test_every_source_has_origin_or_collector(self):
         for meta in sources.SOURCE_META:
-            self.assertTrue(meta["origin"])
-            self.assertIn("http", meta["channel"])
+            # 原有的 12 个源有 origin 和 channel，新增的 6 个源有 collector
+            has_channel = "channel" in meta and "origin" in meta
+            has_collector = "collector" in meta
+            self.assertTrue(has_channel or has_collector, f"{meta['name']} 缺少 channel 或 collector")
 
     def test_demo_fallback(self):
         for name in sources.SOURCES:
@@ -72,13 +74,16 @@ class SourceDefinitionTest(unittest.TestCase):
         # 无外网环境（如 CI 沙箱）也能返回兜底数据。
         items = sources.collect_one("金十数据")
         self.assertGreaterEqual(len(items), 1)
+        # 新增的源也应该有兜底数据
+        items = sources.collect_one("知乎热榜")
+        self.assertGreaterEqual(len(items), 1)
 
 
 class BuildHtmlTest(unittest.TestCase):
     def test_build_html_contains_sources_and_items(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
         out = sources.build_html(brief)
-        self.assertIn("覆盖 12 个数据源", out)
+        self.assertIn("覆盖 18 个数据源", out)
         self.assertIn("金十数据", out)
         self.assertIn("不构成投资建议", out)
 
