@@ -11,7 +11,7 @@
 3. **微博实时热搜** - 微博实时热搜表格解析
 4. **虎扑热搜** - 虎扑社区热帖正则匹配
 5. **AI Hot** - AI 热点新闻聚合 API
-6. **联合早报** - 早晨报聚合（gb2312 编码）
+6. **Google news 中文** - Google News RSS 抓取
 
 ## 技术实现
 
@@ -24,7 +24,7 @@
 - **微博实时热搜**: `https://s.weibo.com/top/summary?cate=realtimehot` (HTML 表格解析)
 - **虎扑热搜**: `https://bbs.hupu.com/topic-daily-hot` (正则表达式匹配)
 - **AI Hot**: `https://aihot.virxact.com/api/public/items?mode=all&take=30`
-- **联合早报**: `https://www.zaochenbao.com/realtime/` (gb2312 编码 HTML 解析)
+- **Google news 中文**: `https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans` (RSS 解析)
 
 ### 架构设计
 
@@ -54,7 +54,7 @@ _COLLECTORS = {
     "weibo": _collect_weibo,
     "hupu": _collect_hupu,
     "aihot": _collect_aihot,
-    "zaobao": _collect_zaobao,
+    "google_news": _collect_google_news,
 }
 ```
 
@@ -114,16 +114,9 @@ class WeiboTableParser(HTMLParser):
     ...
 ```
 
-#### 3. 联合早报需要 gb2312 编码
+#### 3. Google news 中文使用 RSS
 
-```python
-def _collect_zaobao(limit):
-    url = "https://www.zaochenbao.com/realtime/"
-    with urlopen(req, timeout=TIMEOUT) as resp:
-        raw_bytes = resp.read()
-    raw = raw_bytes.decode("gb2312", "replace")  # gb2312 解码
-    ...
-```
+Google News 提供了稳定的 RSS 订阅源，通过 `xml.etree.ElementTree` 解析标题和链接。
 
 #### 4. 虎扑热搜使用正则表达式
 
@@ -165,7 +158,7 @@ _DEMO = {
 - 新增 `import json` 和 `http.cookiejar` 相关导入
 - `SOURCE_META` 增加 6 个新源定义
 - `_DEMO` 增加 6 个新源的演示数据
-- 新增 6 个收集器函数：`_collect_zhihu()`, `_collect_douyin()`, `_collect_weibo()`, `_collect_hupu()`, `_collect_aihot()`, `_collect_zaobao()`
+- 新增 6 个收集器函数：`_collect_zhihu()`, `_collect_douyin()`, `_collect_weibo()`, `_collect_hupu()`, `_collect_aihot()`, `_collect_google_news()`
 - 新增 `WeiboTableParser` 类
 - 新增 `_COLLECTORS` 字典
 - `collect_one()` 函数支持自定义收集器
@@ -234,7 +227,7 @@ python3 sources.py
 
 1. **抖音热搜**：需要有效的 cookie，如果 cookie 过期或被封禁会回退到演示数据
 2. **微博热搜**：依赖特定的 Cookie（已硬编码），可能需要定期更新
-3. **联合早报**：通过早晨报聚合站抓取，如果聚合站不可用会回退到演示数据
+3. **Google news 中文**：通过 Google News RSS 抓取，如果不可用会回退到演示数据
 4. **所有新增源**：在网络受限环境（如 GitHub Actions 沙箱）下会自动回退到演示数据
 
 ## 未来改进
@@ -247,4 +240,4 @@ python3 sources.py
 ## 参考
 
 - NewsNow 项目：https://github.com/ourongxing/newsnow
-- 原始 TypeScript 实现：`/server/sources/{zhihu,douyin,weibo,hupu,aihot,zaobao}.ts`
+- 原始 TypeScript 实现：`/server/sources/{zhihu,douyin,weibo,hupu,aihot,zaobao}.ts`（Google News 为 RSS 抓取）
