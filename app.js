@@ -1,5 +1,5 @@
-const fallbackSources=['MKTNews 快讯','华尔街见闻 快讯','华尔街见闻最新','华尔街见闻 最热','财联社 电报','财联社 深度','财联社 热门','雪球 热门股票','格隆汇 事件','法布财经 快讯','法布财经 头条','金十数据'];
-const stockWords=['股票','深度','热门','事件'];
+const fallbackSources=['MKTNews 快讯','华尔街见闻 快讯','华尔街见闻最新','华尔街见闻 最热','财联社 电报','财联社 深度','财联社 热门','雪球 热门股票','格隆汇 事件','法布财经 快讯','法布财经 头条','金十数据','知乎热榜','抖音热搜','微博实时热搜','虎扑热搜','AI Hot','联合早报'];
+const stockWords=['股票','深度','热门','事件','热搜','热榜'];
 // github.io（GitHub Pages）是纯静态托管：POST /api/run 必然 405，
 // 定时/手动推送由 GitHub Actions 完成，按钮在此环境下改为跳转 Actions。
 const isGithubPages=location.hostname.endsWith('.github.io');
