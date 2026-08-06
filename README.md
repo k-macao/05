@@ -83,3 +83,18 @@ python3 -m venv .venv
 ```
 
 `MOCK_FAIL=1` 可让假服务模拟 PushPlus 拒绝（返回业务码 400），用于测试失败分支。
+
+## PushPlus 推送失败排查（返回码速查）
+
+`push_brief.py` / `server.py` 在推送被拒时会打印**完整返回体**与对应排查建议。官方返回码见 https://www.pushplus.plus/doc/guide/code.html ：
+
+| 返回码 | 含义 | 处理 |
+| --- | --- | --- |
+| 903 | 无效的用户令牌 | token 不正确/已失效：重新登录 www.pushplus.plus 复制最新 token，更新仓库 Secret `PUSHPLUS_TOKEN` |
+| 999 | 服务端验证错误（具体原因在完整返回体里） | 常见：① 配置了 `PUSHPLUS_TOPIC` 但群组编码不存在/不属于该 token 账号——先删除该 Secret 改一对一推送验证；② 账号实名认证过期；③ token 已失效 |
+| 905 | 账户未实名认证 | 到 pushplus.plus 完成实名认证 |
+| 900 | 请求次数过多被限流 | 降低推送频率 |
+| 888 | 积分不足 | 等待额度恢复或充值 |
+| 401 / 403 | 开放接口未启用 / IP 白名单未放行 | 个人中心启用开放接口；GitHub Actions 出口 IP 不固定，建议关闭 IP 白名单 |
+
+> Secret 里粘贴 token/topic 时注意不要带多余空格或换行（脚本会自动 `strip()`）。
