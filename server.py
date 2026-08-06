@@ -73,6 +73,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
                 "message": "服务端未配置 PUSHPLUS_TOKEN，未执行推送。"
             })
+        token = token.strip()  # 防止环境变量混入空白字符
 
         # 真实抓取 18 个数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
         try:
@@ -89,6 +90,8 @@ class Handler(SimpleHTTPRequestHandler):
         }
         topic = os.environ.get("PUSHPLUS_TOPIC")
         if topic:
+            topic = topic.strip() or None  # 与 token 一样去空白，避免群组校验失败
+        if topic:
             payload["topic"] = topic
         try:
             request = Request(
@@ -99,10 +102,25 @@ class Handler(SimpleHTTPRequestHandler):
             with urlopen(request, timeout=15) as response:
                 result = json.loads(response.read().decode("utf-8"))
             if result.get("code") != 200:
-                return self.send_json(HTTPStatus.BAD_GATEWAY, {
-                    "message": result.get("msg", "PushPlus 拒绝了推送请求")
-                })
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+                # 官方文档：code=999 等错误需「具体查看返回内容」，把完整返回体与排查建议一并透出。
+                from push_brief import PUSHPLUS_ERROR_HINTS
+                code = result.get("code")
+                message = f"PushPlus 拒绝（code={code}）：{result.get('msg', '')}"
+                hint = PUSHPLUS_ERROR_HINTS.get(code)
+                if hint:
+                    message += f"｜排查建议：{hint}"
+                message += f"｜完整返回：{json.dumps(result, ensure_ascii=False)}"
+                return self.send_json(HTTPStatus.BAD_GATEWAY, {"message": message})
+        except HTTPError as error:
+            detail = ""
+            try:
+                detail = error.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+            return self.send_json(HTTPStatus.BAD_GATEWAY, {
+                "message": f"PushPlus 请求失败：{error}；返回内容：{detail}"
+            })
+        except (URLError, TimeoutError, json.JSONDecodeError) as error:
             return self.send_json(HTTPStatus.BAD_GATEWAY, {"message": f"PushPlus 请求失败：{error}"})
 
         return self.send_json(HTTPStatus.OK, {"message": "简报已推送至 PushPlus"})
