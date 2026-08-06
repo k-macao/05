@@ -35,7 +35,6 @@ def start_server(port, extra_env=None):
     """启动 server.py，返回 subprocess.Popen。"""
     env = dict(os.environ)
     env.pop("PUSHPLUS_TOKEN", None)
-    env.pop("PUSHPLUS_TOPIC", None)
     env.pop("PUSHPLUS_API_URL", None)
     env["PORT"] = str(port)
     if extra_env:

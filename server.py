@@ -2,7 +2,7 @@
 """本地/容器运行的章鱼 AI·全景分析 API 与静态文件服务。
 
 启动：PUSHPLUS_TOKEN=... python3 server.py
-可选：PORT=4173、PUSHPLUS_TOPIC=xxx
+可选：PORT=4173
 """
 import json
 import os
@@ -88,11 +88,6 @@ class Handler(SimpleHTTPRequestHandler):
             "content": content,
             "template": "html",
         }
-        topic = os.environ.get("PUSHPLUS_TOPIC")
-        if topic:
-            topic = topic.strip() or None  # 与 token 一样去空白，避免群组校验失败
-        if topic:
-            payload["topic"] = topic
         try:
             request = Request(
                 PUSHPLUS_API_URL,

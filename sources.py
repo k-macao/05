@@ -33,7 +33,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
 
 TIMEOUT = 8
-LIMIT = 10            # 每个源默认取前 10 条
+LIMIT = 5             # 每个源默认取前 5 条
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
