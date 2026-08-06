@@ -22,7 +22,7 @@ SOURCES = sources.SOURCES
 
 
 def build_content(now):
-    """真实抓取 12 个数据源并渲染 HTML 简报（网络不可用时自动回退内置演示数据）。"""
+    """真实抓取 18 个数据源并渲染 HTML 简报（网络不可用时自动回退内置演示数据）。"""
     try:
         brief = sources.collect_all()
     except Exception:

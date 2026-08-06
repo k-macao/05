@@ -173,7 +173,7 @@ class MockedPushTest(unittest.TestCase):
                 self.assertEqual(payload["token"], "fake-token-123")
                 self.assertEqual(payload["template"], "html")
                 self.assertIn("章鱼", payload["title"])
-                # 推送内容为真实抓取的 12 个数据源 HTML 简报（网络不可用时回退演示数据）。
+                # 推送内容为真实抓取的 18 个数据源 HTML 简报（网络不可用时回退演示数据）。
                 self.assertIn("章鱼", payload["content"])
                 self.assertIn("数据源", payload["content"])
             finally:
