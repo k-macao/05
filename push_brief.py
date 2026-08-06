@@ -36,6 +36,10 @@ def main():
         print("错误：未配置 PUSHPLUS_TOKEN（请在仓库 Secrets 中设置）", flush=True)
         return 1
 
+    # 诊断：打印 token 长度，帮助排查空白字符问题
+    token = token.strip()
+    print(f"诊断：PUSHPLUS_TOKEN 长度={len(token)}", flush=True)
+
     payload = {
         "token": token,
         "title": "章鱼 AI·全景分析",
@@ -60,7 +64,7 @@ def main():
         return 2
 
     if result.get("code") != 200:
-        print(f"错误：PushPlus 拒绝：{result.get('msg', result)}", flush=True)
+        print(f"错误：PushPlus 拒绝：code={result.get('code')}, msg={result.get('msg', result)}", flush=True)
         return 2
 
     print(f"推送成功：{payload['title']}", flush=True)
