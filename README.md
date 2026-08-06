@@ -23,7 +23,7 @@ PUSHPLUS_TOKEN=你的_PushPlus_token python3 server.py
 
 GitHub Pages 是**纯静态托管**，无法运行 `server.py`，`POST /api/run` 必然返回 **405**——这是平台限制，不是代码问题。因此 github.io 上的推送改由 **GitHub Actions** 完成：
 
-- **定时推送**：每天 04:30 / 11:30 UTC（即北京时间 **12:30 / 19:30**）执行 `push_brief.py` 调用 PushPlus。工作流文件内容在 **`docs/daily-push.workflow.yml`**——由于本仓库的自动化机器人没有 GitHub 的 `workflows` 权限，无法直接创建 `.github/workflows/` 文件，请合并 PR 后手动创建：把 `docs/daily-push.workflow.yml` 的内容粘贴到 `.github/workflows/daily-push.yml`（或用 GitHub 网页新建文件）。随后把 `PUSHPLUS_TOKEN`（可选 `PUSHPLUS_TOPIC`）加入仓库 **Settings → Secrets and variables → Actions**。
+- **定时推送**：每天 04:30 / 11:30 UTC（即北京时间 **12:30 / 19:30**）执行 `push_brief.py` 调用 PushPlus。工作流文件内容在 **`docs/daily-push.workflow.yml`**——由于本仓库的自动化机器人没有 GitHub 的 `workflows` 权限，无法直接创建 `.github/workflows/` 文件，请合并 PR 后手动创建：把 `docs/daily-push.workflow.yml` 的内容粘贴到 `.github/workflows/daily-push.yml`（或用 GitHub 网页新建文件）。随后把 `PUSHPLUS_TOKEN` 加入仓库 **Settings → Secrets and variables → Actions**。
 - **手动触发**：页面「立即运行一次」在 github.io 环境下会自动跳转到 Actions 工作流页面，点 **Run workflow** 即可手动推送一次（`workflow_dispatch`）。
 - 定时任务只在**默认分支（main）**生效：合并 PR 到 main 后即开始按计划执行。
 
@@ -44,7 +44,7 @@ PUSHPLUS_TOKEN=你的_PushPlus_token python3 server.py
 
 - `sources.py` 内置 18 个源的元信息（源头站 + 聚合通道）与抓取/解析逻辑，零第三方依赖（仅标准库）。
 - 华尔街见闻 / 雪球 / 金十 / 法布等站点为 **JS 渲染/需登录**，直连通常只能拿到空壳，因此优先走公开热榜聚合通道 rebang.vip（服务端渲染，标题与链接均回指源头原文）；聚合通道不可用时回退内置演示数据，保证任何环境都能出简报。
-- 每个源默认取 **10 条**，多源会转发同一事件，接后端时可做去重。
+- 每个源默认取 **5 条**，多源会转发同一事件，接后端时可做去重。
 - 完整抓取结果示例见 `docs/12数据源抓取结果.md`（当前文档展示最早接入的 12 个核心源样例；系统实际已接入 18 个数据源）。
 
 ## 后端接口约定（server.py 本地开发用）
@@ -91,10 +91,10 @@ python3 -m venv .venv
 | 返回码 | 含义 | 处理 |
 | --- | --- | --- |
 | 903 | 无效的用户令牌 | token 不正确/已失效：重新登录 www.pushplus.plus 复制最新 token，更新仓库 Secret `PUSHPLUS_TOKEN` |
-| 999 | 服务端验证错误（具体原因在完整返回体里） | 常见：① 配置了 `PUSHPLUS_TOPIC` 但群组编码不存在/不属于该 token 账号——先删除该 Secret 改一对一推送验证；② 账号实名认证过期；③ token 已失效 |
+| 999 | 服务端验证错误（具体原因在完整返回体里） | 常见：① 账号实名认证过期；② token 已失效 |
 | 905 | 账户未实名认证 | 到 pushplus.plus 完成实名认证 |
 | 900 | 请求次数过多被限流 | 降低推送频率 |
 | 888 | 积分不足 | 等待额度恢复或充值 |
 | 401 / 403 | 开放接口未启用 / IP 白名单未放行 | 个人中心启用开放接口；GitHub Actions 出口 IP 不固定，建议关闭 IP 白名单 |
 
-> Secret 里粘贴 token/topic 时注意不要带多余空格或换行（脚本会自动 `strip()`）。
+> Secret 里粘贴 token 时注意不要带多余空格或换行（脚本会自动 `strip()`）。

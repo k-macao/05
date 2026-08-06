@@ -4,7 +4,6 @@
 用法：
     PUSHPLUS_TOKEN=xxx python3 push_brief.py
 可选：
-    PUSHPLUS_TOPIC=xxx       群组 topic
     PUSHPLUS_API_URL=...     覆盖推送地址（测试时指向本地假 PushPlus）
 
 退出码：0 成功，1 未配置 token，2 推送失败。
@@ -32,9 +31,8 @@ PUSHPLUS_ERROR_HINTS = {
     905: "账户未完成实名认证：到 pushplus.plus 完成实名认证后即可发送",
     999: (
         "服务端验证错误（具体原因在完整返回内容里，见上一行）。常见原因："
-        "① 配置了 PUSHPLUS_TOPIC 但群组编码不存在/不属于该 token 的账号——可先删除仓库 Secret "
-        "PUSHPLUS_TOPIC 改为一对一推送验证；② 账号实名认证过期，需重新认证；"
-        "③ token 已失效，重新登录 www.pushplus.plus 复制最新 token"
+        "① 账号实名认证过期，需重新认证；"
+        "② token 已失效，重新登录 www.pushplus.plus 复制最新 token"
     ),
 }
 
@@ -57,14 +55,7 @@ def main():
     # 诊断：打印 token 长度，帮助排查空白字符问题
     token = token.strip()
     print(f"诊断：PUSHPLUS_TOKEN 长度={len(token)}", flush=True)
-
-    topic = os.environ.get("PUSHPLUS_TOPIC")
-    if topic:
-        topic = topic.strip() or None  # 与 token 一样去空白，防止 Secret 里混入换行/空格导致群组校验失败
-    if topic:
-        print(f"诊断：本次为一对多推送，携带群组 topic（长度={len(topic)}）", flush=True)
-    else:
-        print("诊断：本次为一对一推送（未配置 PUSHPLUS_TOPIC）", flush=True)
+    print("诊断：本次为一对一推送", flush=True)
 
     payload = {
         "token": token,
@@ -72,8 +63,6 @@ def main():
         "content": build_content(datetime.now()),
         "template": "html",
     }
-    if topic:
-        payload["topic"] = topic
 
     try:
         request = Request(
