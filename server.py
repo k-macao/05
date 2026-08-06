@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
 SOURCES = sources.SOURCES
 
-# /api/brief 的结果缓存（抓取 12 个源较慢，5 分钟内不重复抓取）。
+# /api/brief 的结果缓存（抓取 18 个源较慢，5 分钟内不重复抓取）。
 _BRIEF_CACHE = {"at": 0.0, "data": None}
 _BRIEF_TTL = 300
 
@@ -74,7 +74,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "message": "服务端未配置 PUSHPLUS_TOKEN，未执行推送。"
             })
 
-        # 真实抓取 12 个数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
+        # 真实抓取 18 个数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
         try:
             brief = get_brief()
         except Exception:
