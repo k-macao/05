@@ -24,7 +24,7 @@ function renderSources(sources){
     const el=document.createElement('div');
     el.className='source-item';
     const short=String(name).slice(0,2);
-    el.innerHTML=`<span class="source-logo">${short}</span><b>${name}</b>${stockWords.some(x=>String(name).includes(x))?'<span class="tag">股票主题</span>':''}`;
+    el.innerHTML=`<span class="source-icon">${short}</span><b>${name}</b>${stockWords.some(x=>String(name).includes(x))?'<span class="tag">股票主题</span>':''}`;
     list.append(el);
   });
   if(countEl) countEl.textContent=sources.length;
@@ -79,5 +79,5 @@ if(refreshBtn)refreshBtn.onclick=()=>{updateRefreshTime();showToast('数据已�
 const deliverySettingsBtn=document.querySelector('#deliverySettings');
 if(deliverySettingsBtn)deliverySettingsBtn.onclick=()=>showToast('打开 PushPlus 推送配置');
 // Schedule toggle persistence
-document.querySelectorAll('.switch input[data-toggle]').forEach(input=>{const key='schedule_'+input.dataset.toggle;const saved=localStorage.getItem(key);if(saved!==null)input.checked=saved==='1';input.onchange=()=>{localStorage.setItem(key,input.checked?'1':'0');showToast(input.checked?'已开启推送':'已关闭推送');};});
+document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{const key='schedule_'+input.dataset.toggle;const saved=localStorage.getItem(key);if(saved!==null)input.checked=saved==='1';input.onchange=()=>{localStorage.setItem(key,input.checked?'1':'0');showToast(input.checked?'已开启推送':'已关闭推送');};});
 let seconds=3*3600+28*60+16;setInterval(()=>{seconds=Math.max(0,seconds-1);const h=String(Math.floor(seconds/3600)).padStart(2,'0'),m=String(Math.floor(seconds%3600/60)).padStart(2,'0'),s=String(seconds%60).padStart(2,'0');document.querySelector('.countdown').textContent=`还有 ${h}:${m}:${s}`},1000);

@@ -521,22 +521,20 @@ def _trunc(s: str, n: int = 60) -> str:
 
 
 def build_html(brief: dict, now: datetime | None = None) -> str:
-    """把简报渲染成适合 PushPlus / 微信阅读的卡片式 HTML。
-
-    PushPlus 的 HTML 会直接进入微信内置浏览器，不能依赖本站 CSS 或脚本。
-    因此这里坚持：所有样式内联、宽度始终 100%、内容可断行、使用 table
-    作为条目布局，并避免微信容易吞掉的外部字体、定位和复杂动画。
-    """
+    """像素风格简报（内联样式，适配 PushPlus / 微信）。"""
     now = now or datetime.now()
-    # 克莱因蓝作为主色，灰色只用于层级较低的辅助文字；样式全部内联，
-    # 确保 PushPlus 转发到微信后仍保持同一套排版。
-    blue = "#002FA7"
-    ink = "#173A83"
-    secondary = "#5D76A9"
-    light_blue = "#EDF2FF"
-    page = "#F2F3F5"
-    line = "#E3E8F1"
+    # 像素配色
+    neon_green = "#39ff14"
+    neon_cyan = "#00f0ff"
+    neon_yellow = "#ffea00"
+    neon_pink = "#ff2a6a"
+    dark = "#0a0a0f"
+    surface = "#12121a"
+    text = "#e6e6f0"
+    dim = "#a0a0b8"
+    line = "#2a2a35"
     total = sum(len(items or []) for items in brief.values())
+    font = "font-family:'VT323','Courier New',monospace;"
 
     source_cards = []
     for index, meta in enumerate(SOURCE_META, 1):
@@ -546,78 +544,64 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
             title = _trunc(str(item.get("title", "")), 100)
             url = item.get("url") or ""
             title_html = (
-                f"<a href=\"{_esc(url)}\" style=\"color:{blue};text-decoration:none;\">"
-                f"{title}</a>"
+                f'<a href="{_esc(url)}" style="color:{neon_cyan};text-decoration:none;">{title}</a>'
                 if url else title
             )
-            border = f"border-bottom:1px solid {line};" if item_index < len(items) else ""
+            border = f'border-bottom:1px solid {line};' if item_index < len(items) else ""
             rows.append(
                 "<tr>"
-                f"<td width=\"24\" valign=\"top\" style=\"width:24px;padding:10px 8px 10px 0;{border}"
-                f"color:{blue};font-size:12px;line-height:1.6;\">{item_index:02d}</td>"
-                f"<td valign=\"top\" style=\"padding:10px 0;{border}color:{ink};font-size:14px;"
-                f"line-height:1.7;word-break:break-all;overflow-wrap:anywhere;\">{title_html}</td>"
+                f'<td width="24" valign="top" style="width:24px;padding:10px 8px 10px 0;{border}color:{neon_green};font-size:14px;line-height:1.6;">{item_index:02d}</td>'
+                f'<td valign="top" style="padding:10px 0;{border}color:{text};font-size:15px;line-height:1.7;word-break:break-all;">{title_html}</td>'
                 "</tr>"
             )
         if not rows:
             rows.append(
-                f"<tr><td style=\"padding:10px 0;color:{secondary};font-size:13px;\">"
-                "暂未抓取到内容</td></tr>"
+                f'<tr><td style="padding:10px 0;color:{dim};font-size:13px;">暂未抓取到内容</td></tr>'
             )
         source_cards.append(
-            f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
-            f"border=\"0\" style=\"width:100%;margin:0 0 12px;background:#FFFFFF;border:1px solid {line};"
-            f"border-radius:12px;\"><tr><td style=\"padding:14px 14px 4px;\">"
-            f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
-            f"border=\"0\"><tr><td style=\"color:{blue};font-size:16px;font-weight:700;line-height:1.45;"
-            f"word-break:break-all;\">{index:02d} · {_esc(meta['name'])}</td>"
-            f"<td align=\"right\" valign=\"top\" style=\"padding-left:8px;white-space:nowrap;"
-            f"color:{blue};font-size:11px;line-height:1.8;\">{len(items)} 条</td></tr></table>"
-            f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
-            f"border=\"0\" style=\"width:100%;\">{''.join(rows)}</table>"
-            "</td></tr></table>"
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+            f'style="width:100%;margin:0 0 14px;background:{surface};border:3px solid {line};border-top:5px solid {neon_green};border-radius:4px;">'
+            f'<tr><td style="padding:14px 14px 4px;">'
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+            f'<td style="color:{neon_green};font-size:15px;font-weight:700;line-height:1.45;word-break:break-all;{font}">{index:02d} · {_esc(meta["name"])}</td>'
+            f'<td align="right" valign="top" style="padding-left:8px;white-space:nowrap;color:{neon_cyan};font-size:12px;line-height:1.8;{font}">{len(items)} 条</td>'
+            f'</tr></table>'
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">{"".join(rows)}</table>'
+            f'</td></tr></table>'
         )
 
     return (
-        f"<div style=\"width:100%;max-width:100%;margin:0;padding:16px 12px 24px;box-sizing:border-box;"
-        f"background:{page};color:{ink};font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',"
-        f"'Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:anywhere;\">"
-        f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
-        f"style=\"width:100%;margin:0 0 12px;background:#FFFFFF;border:1px solid {line};border-radius:12px;\">"
-        f"<tr><td style=\"padding:20px 16px 16px;\">"
-        f"<div style=\"margin:0 0 9px;color:{blue};font-size:11px;line-height:1.4;letter-spacing:1px;\">"
-        "AI INFORMATION BRIEF</div>"
-        f"<div style=\"margin:0;color:{blue};font-size:25px;font-weight:700;line-height:1.35;"
-        f"letter-spacing:-.5px;\">章鱼 AI·全景分析</div>"
-        f"<div style=\"margin:8px 0 0;color:{secondary};font-size:12px;line-height:1.5;\">"
-        f"{now:%Y年%m月%d日 %H:%M} 更新 · 覆盖 {len(SOURCE_META)} 个数据源 · 每日两次推送</div>"
-        "</td></tr></table>"
-        f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
-        f"style=\"width:100%;margin:0 0 12px;background:#FFFFFF;border:1px solid {line};border-left:3px solid {blue};"
-        f"border-radius:12px;\"><tr><td style=\"padding:16px;\">"
-        f"<div style=\"margin:0 0 7px;color:{secondary};font-size:12px;line-height:1.4;\">今日一句话</div>"
-        f"<div style=\"margin:0;color:{ink};font-size:16px;line-height:1.8;word-break:break-all;\">"
-        f"市场风险偏好回升，<span style=\"color:{blue};font-weight:700;background:{light_blue};\">"
-        "AI 算力与电网投资</span>仍是资金聚焦主线，但短期需警惕高位分化。</div>"
-        f"<div style=\"margin:12px 0 0;color:{blue};font-size:11px;line-height:1.4;\">"
-        "偏多　·　科技 / 能源</div>"
-        "</td></tr></table>"
-        f"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
-        f"style=\"width:100%;margin:0 0 12px;background:{light_blue};border:1px solid #DCE6FF;border-radius:12px;\">"
-        f"<tr><td align=\"center\" style=\"width:33.33%;padding:12px 4px;color:{blue};font-size:20px;"
-        f"font-weight:700;line-height:1.3;\">{len(SOURCE_META)}<br><span style=\"color:{secondary};font-size:11px;"
-        f"font-weight:400;\">数据源</span></td>"
-        f"<td align=\"center\" style=\"width:33.33%;padding:12px 4px;color:{blue};font-size:20px;"
-        f"font-weight:700;line-height:1.3;border-left:1px solid #DCE6FF;border-right:1px solid #DCE6FF;\">"
-        f"{total}<br><span style=\"color:{secondary};font-size:11px;font-weight:400;\">条快讯</span></td>"
-        f"<td align=\"center\" style=\"width:33.33%;padding:12px 4px;color:{blue};font-size:20px;"
-        f"font-weight:700;line-height:1.3;\">2<br><span style=\"color:{secondary};font-size:11px;"
-        f"font-weight:400;\">今日推送</span></td></tr></table>"
-        + "".join(source_cards)
-        + f"<div style=\"padding:4px 4px 0;color:{secondary};font-size:11px;line-height:1.7;text-align:center;\">"
-        "数据仅供参考，不构成投资建议</div></div>"
-    )
+        f'<div style="width:100%;max-width:100%;margin:0;padding:16px 12px 24px;box-sizing:border-box;background:{dark};color:{text};{font};word-break:break-word;">'
+        # Header banner
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 14px;background:{surface};border:4px solid {neon_green};border-left:8px solid {neon_green};border-radius:4px;">'
+        f'<tr><td style="padding:20px 16px 16px;">'
+        f'<div style="margin:0 0 8px;color:{neon_cyan};font-size:11px;line-height:1.4;letter-spacing:2px;text-transform:uppercase;{font}">AI INFORMATION BRIEF · PIXEL MODE</div>'
+        f'<div style="margin:0;color:#fff;font-size:26px;font-weight:700;line-height:1.3;letter-spacing:-1px;{font}">章鱼 AI·全景分析</div>'
+        f'<div style="margin:8px 0 0;color:{dim};font-size:13px;line-height:1.5;{font}">{now:%Y年%m月%d日 %H:%M} 更新 · 覆盖 {len(SOURCE_META)} 个数据源 · 每日两次推送</div>'
+        f'</td></tr></table>'
 
+        # Insight card
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 14px;background:{surface};border:3px solid {neon_cyan};border-left:6px solid {neon_cyan};border-radius:4px;">'
+        f'<tr><td style="padding:16px;">'
+        f'<div style="margin:0 0 8px;color:{neon_cyan};font-size:12px;line-height:1.4;letter-spacing:1px;{font}">今日一句话</div>'
+        f'<div style="margin:0;color:{text};font-size:17px;line-height:1.8;word-break:break-all;{font}">'
+        f'市场风险偏好回升，<span style="color:#111;background:{neon_yellow};padding:0 3px;font-weight:700;">AI 算力与电网投资</span>仍是资金聚焦主线，但短期需警惕高位分化。</div>'
+        f'<div style="margin:12px 0 0;color:{neon_green};font-size:12px;line-height:1.4;{font}">偏多　·　科技 / 能源</div>'
+        f'</td></tr></table>'
+
+        # Stats card
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 14px;background:{surface};border:3px solid {neon_yellow};border-radius:4px;">'
+        f'<tr>'
+        f'<td align="center" style="width:33.33%;padding:14px 4px;color:{neon_green};font-size:22px;font-weight:700;line-height:1.3;{font}">{len(SOURCE_META)}<br><span style="color:{dim};font-size:11px;font-weight:400;{font}">数据源</span></td>'
+        f'<td align="center" style="width:33.33%;padding:14px 4px;color:{neon_cyan};font-size:22px;font-weight:700;line-height:1.3;border-left:1px solid {line};border-right:1px solid {line};{font}">{total}<br><span style="color:{dim};font-size:11px;font-weight:400;{font}">条快讯</span></td>'
+        f'<td align="center" style="width:33.33%;padding:14px 4px;color:{neon_pink};font-size:22px;font-weight:700;line-height:1.3;{font}">2<br><span style="color:{dim};font-size:11px;font-weight:400;{font}">今日推送</span></td>'
+        f'</tr></table>'
+
+        + "".join(source_cards)
+
+        + f'<div style="padding:8px 4px 0;color:{dim};font-size:11px;line-height:1.7;text-align:center;{font}">数据仅供参考，不构成投资建议</div>'
+        + '</div>'
+    )
 
 if __name__ == "__main__":
     print(f"开始抓取 {len(SOURCES)} 个数据源…")
