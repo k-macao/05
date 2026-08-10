@@ -36,6 +36,7 @@ def start_server(port, extra_env=None):
     env = dict(os.environ)
     env.pop("PUSHPLUS_TOKEN", None)
     env.pop("PUSHPLUS_API_URL", None)
+    env.pop("PUSHPLUS_TOPIC", None)
     env["PORT"] = str(port)
     if extra_env:
         env.update(extra_env)
@@ -171,6 +172,8 @@ class MockedPushTest(unittest.TestCase):
                 self.assertEqual(record["path"], "/send")
                 self.assertEqual(payload["token"], "fake-token-123")
                 self.assertEqual(payload["template"], "html")
+                # 一对多推送：载荷必须带群组编码 oai.1。
+                self.assertEqual(payload["topic"], "oai.1")
                 self.assertIn("章鱼", payload["title"])
                 # 推送内容为真实抓取的 18 个数据源 HTML 简报（网络不可用时回退演示数据）。
                 self.assertIn("章鱼", payload["content"])

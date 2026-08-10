@@ -5,6 +5,7 @@
     PUSHPLUS_TOKEN=xxx python3 push_brief.py
 可选：
     PUSHPLUS_API_URL=...     覆盖推送地址（测试时指向本地假 PushPlus）
+    PUSHPLUS_TOPIC=...       覆盖群组编码（默认 oai.1，一对多群组推送）
 
 退出码：0 成功，1 未配置 token，2 推送失败。
 """
@@ -17,6 +18,8 @@ from urllib.request import Request, urlopen
 import sources
 
 API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
+# 群组编码：一对多推送目标，群成员扫码入群后均可收到；留空则退回一对一（仅发给自己）。
+TOPIC = os.environ.get("PUSHPLUS_TOPIC", "oai.1").strip()
 SOURCES = sources.SOURCES
 
 # PushPlus 官方返回码 → 排查建议（https://www.pushplus.plus/doc/guide/code.html）
@@ -55,7 +58,10 @@ def main():
     # 诊断：打印 token 长度，帮助排查空白字符问题
     token = token.strip()
     print(f"诊断：PUSHPLUS_TOKEN 长度={len(token)}", flush=True)
-    print("诊断：本次为一对一推送", flush=True)
+    if TOPIC:
+        print(f"诊断：本次为一对多推送（群组编码 topic={TOPIC}）", flush=True)
+    else:
+        print("诊断：未配置群组编码，本次为一对一推送", flush=True)
 
     payload = {
         "token": token,
@@ -63,6 +69,8 @@ def main():
         "content": build_content(datetime.now()),
         "template": "html",
     }
+    if TOPIC:
+        payload["topic"] = TOPIC
 
     try:
         request = Request(
