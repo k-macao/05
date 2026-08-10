@@ -18,6 +18,8 @@ import sources
 ROOT = Path(__file__).resolve().parent
 # 推送地址可用环境变量覆盖，默认走真实 PushPlus；测试时指向本地假服务。
 PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
+# 群组编码：一对多推送目标（默认 oai.1）；设为空字符串则退回一对一（仅发给自己）。
+PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "oai.1").strip()
 SOURCES = sources.SOURCES
 
 # /api/brief 的结果缓存（抓取 18 个源较慢，5 分钟内不重复抓取）。
@@ -88,6 +90,8 @@ class Handler(SimpleHTTPRequestHandler):
             "content": content,
             "template": "html",
         }
+        if PUSHPLUS_TOPIC:
+            payload["topic"] = PUSHPLUS_TOPIC
         try:
             request = Request(
                 PUSHPLUS_API_URL,
