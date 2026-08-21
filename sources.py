@@ -18,6 +18,7 @@
     SOURCE_META        : 每个源的元信息（name / origin / channel / collector）
     collect_all()      : 依次抓取全部 18 个源，返回 {name: [item, ...]}
     collect_one(name)  : 抓取单个源，返回 [item, ...]
+    analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
     build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报
 """
 from __future__ import annotations
@@ -510,6 +511,125 @@ def collect_all(limit: int = LIMIT) -> dict:
     return result
 
 
+# ---------------------------------------------------------------- 开篇 AI 总结引擎
+# 换新方式：不再硬编码「今日一句话」，改为对真实抓取到的标题做
+# 「主题热度 + 多空情绪」统计，每次推送都随数据动态更新，零外部依赖、可离线运行。
+# 如需接入在线大模型，只需覆盖 analyze_brief() 的返回值（字段保持一致即可）。
+
+# (板块标签, 关键词)。一条标题命中任一关键词即计入该主题热度，并按数据源去重计权。
+_THEMES = [
+    ("AI 算力", ["AI", "人工智能", "算力", "大模型", "数据中心", "OpenAI", "Anthropic",
+                "DeepMind", "GPT", "Claude", "Gemini", "Llama", "机器人", "GPU"]),
+    ("光通信", ["光纤", "光通信", "光缆", "光模块", "古河电工"]),
+    ("半导体", ["半导体", "芯片", "晶圆", "台积电", "英伟达", "AMD"]),
+    ("贵金属", ["黄金", "铂金", "钯金", "白银", "原油", "稀土", "矿产"]),
+    ("美联储", ["美联储", "央行", "加息", "降息", "货币政策", "贝森特", "日元", "汇率",
+               "美元", "逆回购", "流动性", "利率"]),
+    ("地缘", ["伊朗", "阿曼", "霍尔木兹", "海峡", "中东", "战争", "制裁", "美伊",
+             "特朗普", "干预"]),
+    ("医药", ["诺和诺德", "医药", "医疗", "GLP", "疫苗", "制药", "临床", "辉瑞"]),
+    ("智驾", ["自动驾驶", "智驾", "智能驾驶", "新能源车", "特斯拉", "L3", "L4"]),
+    ("地产", ["楼市", "地产", "房价", "房企", "豪宅"]),
+    ("消费", ["消费", "零售", "电商", "餐饮", "麦当劳", "宝洁", "亚马逊"]),
+    ("航天", ["SpaceX", "火箭", "卫星", "发射"]),
+]
+
+_BULLISH = ["上涨", "暴涨", "大涨", "涨超", "涨逾", "涨幅扩大", "创新高", "新高", "首破",
+            "突破", "上调", "增持", "利好", "扩产", "反弹", "回升", "盈利", "超预期",
+            "开门红", "修复", "反攻", "暴增", "回暖", "翻倍", "前景改善", "净利", "企稳"]
+_BEARISH = ["下跌", "暴跌", "重挫", "新低", "危机", "风险", "警示", "警惕", "债务", "逾期",
+            "诉讼", "立案", "下调", "减持", "冲击", "利空", "泡沫", "争议", "放缓", "衰退",
+            "疲软", "贬值", "缩水", "承压", "亏损", "负增长", "暴雷", "抛售"]
+
+
+def analyze_brief(brief: dict) -> dict:
+    """对采集结果做本地「AI 总结」：主题热度 + 多空博弈概率。
+
+    返回：
+        headline  今日一句话正文（纯文本，引用热度最高的一两个板块）
+        bias      偏多 / 偏空 / 中性
+        bull      多方概率（百分比整数）
+        bear      空方概率（百分比整数）
+        sectors   热度最高的板块标签列表（最多 2 个）
+    """
+    theme_sources = {tag: set() for tag, _ in _THEMES}
+    theme_mentions = {tag: 0 for tag in theme_sources}
+    bull = bear = 0
+
+    for name, items in (brief or {}).items():
+        for item in items or []:
+            title = item.get("title", "") or ""
+            if not title:
+                continue
+            # 多空：单条标题按「多方词命中数 vs 空方词命中数」判定方向，避免单条重复计数。
+            up = sum(1 for word in _BULLISH if word in title)
+            down = sum(1 for word in _BEARISH if word in title)
+            if up > down:
+                bull += 1
+            elif down > up:
+                bear += 1
+            # 主题：命中即累计，并记录出现在哪些数据源（跨源命中 = 更强信号）。
+            for tag, keywords in _THEMES:
+                if any(keyword in title for keyword in keywords):
+                    theme_mentions[tag] += 1
+                    theme_sources[tag].add(name)
+
+    ranked = sorted(
+        ((tag, len(theme_sources[tag]), theme_mentions[tag]) for tag in theme_sources),
+        key=lambda entry: (entry[1], entry[2]),
+        reverse=True,
+    )
+    top_themes = [(tag, src, men) for tag, src, men in ranked if src > 0]
+    sectors = [tag for tag, _, _ in top_themes[:2]]
+
+    if bull + bear > 0:
+        bull_pct = round(bull / (bull + bear) * 100)
+        bear_pct = 100 - bull_pct
+        if bull_pct >= 60:
+            bias = "偏多"
+        elif bull_pct <= 40:
+            bias = "偏空"
+        else:
+            bias = "中性"
+    else:
+        # 无任何多空信号（例如空简报）：诚实标注中性，不做无依据的方向判断。
+        bull_pct, bear_pct, bias = 50, 50, "中性"
+
+    headline = _compose_headline(bias, top_themes)
+    return {
+        "headline": headline,
+        "bias": bias,
+        "bull": bull_pct,
+        "bear": bear_pct,
+        "sectors": sectors,
+        "top_themes": top_themes,
+    }
+
+
+def _compose_headline(bias: str, top_themes: list) -> str:
+    """依据多空方向与热度最高的板块，拼出自然的『今日一句话』。"""
+    t1 = top_themes[0][0] if top_themes else None
+    t2 = top_themes[1][0] if len(top_themes) > 1 else None
+
+    if bias == "偏多":
+        if t1 and t2:
+            return f"市场风险偏好回升，资金聚焦{t1}与{t2}两条线索，多方情绪占优，但短期需警惕高位分化。"
+        if t1:
+            return f"市场情绪偏暖，{t1}成为资金聚焦主线，多方占优，注意高位波动。"
+        return "市场情绪偏暖，多方占优，但热点轮动较快，注意追高风险。"
+    if bias == "偏空":
+        if t1 and t2:
+            return f"市场情绪转弱，{t1}与{t2}扰动增多，避险情绪升温，短期宜控制仓位。"
+        if t1:
+            return f"市场情绪转弱，{t1}风险扰动增多，空方占优，宜谨慎应对。"
+        return "市场情绪偏谨慎，空方占优，风险事件增多，短期以防御为主。"
+    if t1 and t2:
+        return f"市场分歧加大，{t1}与{t2}轮动频繁，多空力量接近，方向尚待明朗。"
+    if t1:
+        return f"市场方向未明，{t1}成为焦点但分歧较大，等待更多信号确认。"
+    return "市场多空拉锯，方向尚不明朗，建议控制仓位、等待信号。"
+
+
 # ---------------------------------------------------------------- 推送 HTML
 def _esc(s: str) -> str:
     return html.escape(s or "", quote=True)
@@ -572,6 +692,20 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
             f'</td></tr></table>'
         )
 
+    # 开篇 AI 总结：由 analyze_brief() 依据真实抓取结果动态生成，不再硬编码。
+    analysis = analyze_brief(brief)
+    headline = _esc(analysis["headline"])
+    for tag in analysis["sectors"]:
+        tag_esc = _esc(tag)
+        highlight = (
+            f'<span style="color:{neon_green};background:{black};padding:1px 3px;font-weight:700;">{tag_esc}</span>'
+        )
+        headline = headline.replace(tag_esc, highlight)
+    sector_line = " / ".join(analysis["sectors"]) if analysis["sectors"] else "综合"
+    bias_line = (
+        f'{analysis["bias"]}　·　{sector_line}　·　多 {analysis["bull"]}% 空 {analysis["bear"]}%'
+    )
+
     intro = (
         "全网境内外为你寻找蛛丝马迹-提供全景视野分析。由多模型协同推理决策，"
         "底层所使用的大语言模型（LLM）多模式背后结合使用了多种不同的先进模型，"
@@ -594,8 +728,8 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
         f'<tr><td style="padding:11px 12px 12px;">'
         f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">今日一句话</div>'
-        f'<div style="margin:0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">市场风险偏好回升，<span style="color:{neon_green};background:{black};padding:1px 3px;font-weight:700;">AI 算力与电网投资</span>仍是资金聚焦主线，但短期需警惕高位分化。</div>'
-        f'<div style="margin:8px 0 0;color:{muted};font-size:10px;line-height:1.4;{font}">偏多　·　科技 / 能源</div>'
+        f'<div style="margin:0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{headline}</div>'
+        f'<div style="margin:8px 0 0;color:{muted};font-size:10px;line-height:1.4;{font}">{bias_line}</div>'
         f'</td></tr></table>'
 
         # Compact report counters.
