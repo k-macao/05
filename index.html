@@ -3,14 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="章鱼 AI·全景分析 — 复古像素风格信息雷达" />
-  <meta name="author" content="章鱼 AI·全景分析" />
-  <meta name="theme-color" content="#0a0a0f" />
-  <title>章鱼 AI·全景分析 — PIXEL MODE</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260808" />
+  <meta name="description" content="章鱼 AI 全景分析 — 全网 AI 调研境内境外数据，由多个大模型混合部署。" />
+  <meta name="author" content="章鱼 ai" />
+  <meta name="theme-color" content="#ecefea" />
+  <title>章鱼 AI 全景分析</title>
+  <link rel="stylesheet" href="styles.css?v=20260821" />
 </head>
 <body>
   <div class="crt-overlay" aria-hidden="true"></div>
@@ -20,28 +17,28 @@
     <header class="pixel-header">
       <div class="brand">
         <span class="brand-mark" aria-label="章鱼">🐙</span>
-        <span class="brand-text">章鱼 AI · 全景分析</span>
-        <span class="pixel-badge">PIXEL MODE</span>
+        <span class="brand-text">章鱼 AI 全景分析</span>
+        <span class="pixel-badge">AI RESEARCH</span>
       </div>
       <div class="pixel-actions">
         <button class="pixel-btn" id="refreshBtn" aria-label="刷新数据">↻</button>
-        <button class="pixel-btn" id="settingsBtn" aria-label="设置">⚙</button>
+        <button class="pixel-btn" id="settingsBtn" aria-label="设置">＋</button>
       </div>
     </header>
 
     <div class="pixel-status" id="statusBar" role="status" aria-live="polite">
       <span class="pixel-dot ok"></span>
-      <span>数据源正常 · 上次刷新 <time id="lastRefresh">刚刚</time></span>
+      <span>全网调研连接正常 · 最近更新 <time id="lastRefresh">刚刚</time></span>
     </div>
 
     <section class="pixel-hero">
-      <div class="eyebrow"><span class="live-dot"></span> AI 信息雷达 · 已连接</div>
-      <h1>把市场噪音，<br><em>变成一句话。</em></h1>
-      <p class="hero-copy">每天两次，自动聚合重要信息<br>为你的投资决策节省时间。</p>
+      <div class="eyebrow"><span class="live-dot"></span> 全网 AI 调研 / 境内 × 境外</div>
+      <h1>章鱼 AI <em>全景分析</em></h1>
+      <p class="hero-copy">全网 AI 调研境内境外数据，由多个大模型混合部署。</p>
       <div class="pixel-panel next-run">
-        <span>下一次推送</span>
-        <strong>今天 19:30</strong>
-        <span class="countdown" id="countdown">还有 03:28:16</span>
+        <span>调研范围</span>
+        <strong>境内 × 境外</strong>
+        <span>多模型协同推理</span>
       </div>
       <div class="quick-stats">
         <div class="stat"><b id="statSources">18</b><small>数据源</small></div>
@@ -78,17 +75,17 @@
     <section class="pixel-section">
       <div class="pixel-section-head">
         <div><span class="kicker">AI INSIGHT</span><h2>今日一句话</h2></div>
-        <span class="ai-pill">✦ AI 已分析</span>
+        <span class="ai-pill">✦ 多模型已分析</span>
       </div>
       <article class="insight-card" id="insightCard">
-        <div class="quote-mark">"</div>
+        <div class="quote-mark">“</div>
         <p id="insightText">市场风险偏好回升，<mark>AI 算力与电网投资</mark>仍是资金聚焦主线，但短期需警惕高位分化。</p>
         <div class="insight-meta">
           <span class="meta-tag" id="sentimentTag">偏多</span>
-          <span class="meta-tag neutral" id="sectorTag">科技·能源</span>
+          <span class="meta-tag neutral" id="sectorTag">科技 · 能源</span>
         </div>
         <div class="insight-foot">
-          <span id="insightSource">基于 42 条快讯 · <time id="insightTime">19:12</time> 更新</span>
+          <span id="insightSource">基于 42 条境内外快讯</span>
           <button class="arrow-btn" id="expandBtn" aria-label="展开 AI 分析">↗</button>
         </div>
       </article>
@@ -105,24 +102,27 @@
 
     <section class="pixel-section delivery-section">
       <div class="pixel-section-head">
-        <div><span class="kicker">DELIVERY</span><h2>推送设置</h2></div>
+        <div><span class="kicker">WECHAT DELIVERY</span><h2>微信阅读</h2></div>
         <span class="connected"><i></i> 已连接</span>
       </div>
       <div class="delivery-card">
-        <div class="push-icon">P</div>
-        <div><b>PushPlus</b><small>推送至微信 · 每日两次</small></div>
+        <div class="push-icon">AI</div>
+        <div><b>简报订阅</b><small>推送至微信 · 每日两次</small></div>
         <button class="chevron" id="deliverySettings" aria-label="推送设置详情">›</button>
       </div>
       <div class="delivery-subs">
-        <div class="sub-item"><span class="sub-icon">👥</span><div><b>订阅者</b><small id="subCount">1 人已订阅</small></div></div>
-        <div class="sub-item"><span class="sub-icon">📊</span><div><b>推送统计</b><small>今日已推 2 次</small></div></div>
+        <div class="sub-item"><span class="sub-icon">◎</span><div><b>订阅者</b><small id="subCount">1 人已订阅</small></div></div>
+        <div class="sub-item"><span class="sub-icon">▣</span><div><b>推送统计</b><small>今日已推 2 次</small></div></div>
       </div>
     </section>
 
-    <footer>章鱼 AI·全景分析 · 专注重要信息<br><span>数据仅供参考，不构成投资建议</span></footer>
+    <footer>
+      <p>全网境内外为你寻找蛛丝马迹-提供全景视野分析。由多模型协同推理决策，底层所使用的大语言模型（LLM）多模式背后结合使用了多种不同的先进模型，包括但不限于 Claude、ChatGPT、Gemini、Grok、Qwen 以及 Kimi。根据不同的资产管理任务需求，更好地发挥各个模型的优势来提供数据支持！[加油]</p>
+      <strong>作者：章鱼 ai　　仅供参考，分析研究</strong>
+    </footer>
   </main>
 
   <div class="toast" id="toast">正在生成今日简报…</div>
-  <script src="app.js?v=20260808c"></script>
+  <script src="app.js?v=20260821"></script>
 </body>
 </html>

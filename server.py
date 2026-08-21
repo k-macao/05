@@ -86,7 +86,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         payload = {
             "token": token,
-            "title": "章鱼 AI·全景分析",
+            "title": "章鱼 AI 全景分析",
             "content": content,
             "template": "html",
         }
