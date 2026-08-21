@@ -18,7 +18,7 @@
     SOURCE_META        : 每个源的元信息（name / origin / channel / collector）
     collect_all()      : 依次抓取全部 18 个源，返回 {name: [item, ...]}
     collect_one(name)  : 抓取单个源，返回 [item, ...]
-    build_html(brief)  : 由采集结果生成可推送给 PushPlus 的 HTML 简报
+    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报
 """
 from __future__ import annotations
 
@@ -521,20 +521,22 @@ def _trunc(s: str, n: int = 60) -> str:
 
 
 def build_html(brief: dict, now: datetime | None = None) -> str:
-    """像素风格简报（内联样式，适配 PushPlus / 微信）。"""
-    now = now or datetime.now()
-    # 像素配色
-    neon_green = "#39ff14"
-    neon_cyan = "#00f0ff"
-    neon_yellow = "#ffea00"
-    neon_pink = "#ff2a6a"
-    dark = "#0a0a0f"
-    surface = "#12121a"
-    text = "#e6e6f0"
-    dim = "#a0a0b8"
-    line = "#2a2a35"
+    """生成适合微信阅读的竖版长图文简报（内联样式，兼容 PushPlus HTML 模板）。
+
+    视觉基调：电子杂志 × 电子墨水。页面以浅灰纸张为底，正文使用黑色，
+    只用荧光绿和黑色做标题、标记与重点强调，避免邮件客户端中的复杂布局。
+    ``now`` 保留在接口中以兼容现有调用，但报告标题不展示推送时间。
+    """
+    # E-ink editorial palette: paper first, ink second, green only for emphasis.
+    neon_green = "#b7ff00"
+    ink = "#111311"
+    black = "#0a0c0a"
+    paper = "#ecefea"
+    paper_lift = "#f7f8f5"
+    muted = "#626a61"
+    rule = "#c8cec5"
+    font = "font-family:Arial,'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;"
     total = sum(len(items or []) for items in brief.values())
-    font = "font-family:'VT323','Courier New',monospace;"
 
     source_cards = []
     for index, meta in enumerate(SOURCE_META, 1):
@@ -544,62 +546,73 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
             title = _trunc(str(item.get("title", "")), 100)
             url = item.get("url") or ""
             title_html = (
-                f'<a href="{_esc(url)}" style="color:{neon_cyan};text-decoration:none;">{title}</a>'
+                f'<a href="{_esc(url)}" style="color:{ink};text-decoration:underline;text-decoration-color:{neon_green};text-decoration-thickness:2px;">{title}</a>'
                 if url else title
             )
-            border = f'border-bottom:1px solid {line};' if item_index < len(items) else ""
+            border = f'border-bottom:1px solid {rule};' if item_index < len(items) else ""
             rows.append(
                 "<tr>"
-                f'<td width="24" valign="top" style="width:24px;padding:10px 8px 10px 0;{border}color:{neon_green};font-size:14px;line-height:1.6;">{item_index:02d}</td>'
-                f'<td valign="top" style="padding:10px 0;{border}color:{text};font-size:15px;line-height:1.7;word-break:break-all;">{title_html}</td>'
+                f'<td width="22" valign="top" style="width:22px;padding:8px 7px 8px 0;{border}color:{muted};font-size:11px;line-height:1.6;{font}">{item_index:02d}</td>'
+                f'<td valign="top" style="padding:8px 0;{border}color:{ink};font-size:13px;line-height:1.65;word-break:break-all;{font}">{title_html}</td>'
                 "</tr>"
             )
         if not rows:
             rows.append(
-                f'<tr><td style="padding:10px 0;color:{dim};font-size:13px;">暂未抓取到内容</td></tr>'
+                f'<tr><td style="padding:8px 0;color:{muted};font-size:11px;{font}">暂未抓取到内容</td></tr>'
             )
         source_cards.append(
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-            f'style="width:100%;margin:0 0 14px;background:{surface};border:3px solid {line};border-top:5px solid {neon_green};border-radius:4px;">'
-            f'<tr><td style="padding:14px 14px 4px;">'
+            f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
+            f'<tr><td style="padding:10px 11px 3px;">'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-            f'<td style="color:{neon_green};font-size:15px;font-weight:700;line-height:1.45;word-break:break-all;{font}">{index:02d} · {_esc(meta["name"])}</td>'
-            f'<td align="right" valign="top" style="padding-left:8px;white-space:nowrap;color:{neon_cyan};font-size:12px;line-height:1.8;{font}">{len(items)} 条</td>'
+            f'<td style="color:{neon_green};background:{black};padding:3px 5px;font-size:12px;font-weight:700;line-height:1.4;word-break:break-all;{font}">{index:02d} · {_esc(meta["name"])}</td>'
+            f'<td align="right" valign="top" style="padding-left:8px;white-space:nowrap;color:{ink};font-size:11px;line-height:1.8;{font}">{len(items)} 条</td>'
             f'</tr></table>'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">{"".join(rows)}</table>'
             f'</td></tr></table>'
         )
 
+    intro = (
+        "全网境内外为你寻找蛛丝马迹-提供全景视野分析。由多模型协同推理决策，"
+        "底层所使用的大语言模型（LLM）多模式背后结合使用了多种不同的先进模型，"
+        "包括但不限于 Claude、ChatGPT、Gemini、Grok、Qwen 以及 Kimi。"
+        "根据不同的资产管理任务需求，更好地发挥各个模型的优势来提供数据支持！[加油]"
+    )
+    author = "作者：章鱼 ai　　仅供参考，分析研究"
+
     return (
-        f'<div style="width:100%;max-width:100%;margin:0;padding:16px 12px 24px;box-sizing:border-box;background:{dark};color:{text};{font};word-break:break-word;">'
-        # Header banner
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 14px;background:{surface};border:4px solid {neon_green};border-left:8px solid {neon_green};border-radius:4px;">'
-        f'<tr><td style="padding:20px 16px 16px;">'
-        f'<div style="margin:0 0 8px;color:{neon_cyan};font-size:11px;line-height:1.4;letter-spacing:2px;text-transform:uppercase;{font}">AI INFORMATION BRIEF · PIXEL MODE</div>'
-        f'<div style="margin:0;color:#fff;font-size:26px;font-weight:700;line-height:1.3;letter-spacing:-1px;{font}">章鱼 AI·全景分析</div>'
-        f'<div style="margin:8px 0 0;color:{dim};font-size:13px;line-height:1.5;{font}">{now:%Y年%m月%d日 %H:%M} 更新 · 覆盖 {len(SOURCE_META)} 个数据源 · 每日两次推送</div>'
+        f'<div style="width:100%;max-width:100%;margin:0;padding:12px 10px 20px;box-sizing:border-box;background:{paper};color:{ink};{font}word-break:break-word;">'
+        # Editorial masthead: deliberately no PushPlus label and no timestamp.
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{black};border-left:6px solid {neon_green};">'
+        f'<tr><td style="padding:14px 13px 13px;">'
+        f'<div style="margin:0 0 7px;color:{neon_green};font-size:10px;line-height:1.4;letter-spacing:1.5px;{font}">全网 AI 调研　/　境内 × 境外</div>'
+        f'<div style="margin:0;color:{neon_green};font-size:23px;font-weight:800;line-height:1.25;letter-spacing:-.5px;{font}">章鱼 AI 全景分析</div>'
+        f'<div style="margin:7px 0 0;color:#fff;font-size:12px;line-height:1.55;{font}">全网 AI 调研境内境外数据，由多个大模型混合部署。覆盖 {len(SOURCE_META)} 个数据源。</div>'
         f'</td></tr></table>'
 
-        # Insight card
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 14px;background:{surface};border:3px solid {neon_cyan};border-left:6px solid {neon_cyan};border-radius:4px;">'
-        f'<tr><td style="padding:16px;">'
-        f'<div style="margin:0 0 8px;color:{neon_cyan};font-size:12px;line-height:1.4;letter-spacing:1px;{font}">今日一句话</div>'
-        f'<div style="margin:0;color:{text};font-size:17px;line-height:1.8;word-break:break-all;{font}">'
-        f'市场风险偏好回升，<span style="color:#111;background:{neon_yellow};padding:0 3px;font-weight:700;">AI 算力与电网投资</span>仍是资金聚焦主线，但短期需警惕高位分化。</div>'
-        f'<div style="margin:12px 0 0;color:{neon_green};font-size:12px;line-height:1.4;{font}">偏多　·　科技 / 能源</div>'
+        # One-line insight with green-on-black highlight.
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
+        f'<tr><td style="padding:11px 12px 12px;">'
+        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">今日一句话</div>'
+        f'<div style="margin:0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">市场风险偏好回升，<span style="color:{neon_green};background:{black};padding:1px 3px;font-weight:700;">AI 算力与电网投资</span>仍是资金聚焦主线，但短期需警惕高位分化。</div>'
+        f'<div style="margin:8px 0 0;color:{muted};font-size:10px;line-height:1.4;{font}">偏多　·　科技 / 能源</div>'
         f'</td></tr></table>'
 
-        # Stats card
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 14px;background:{surface};border:3px solid {neon_yellow};border-radius:4px;">'
+        # Compact report counters.
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{black};border:1px solid {black};">'
         f'<tr>'
-        f'<td align="center" style="width:33.33%;padding:14px 4px;color:{neon_green};font-size:22px;font-weight:700;line-height:1.3;{font}">{len(SOURCE_META)}<br><span style="color:{dim};font-size:11px;font-weight:400;{font}">数据源</span></td>'
-        f'<td align="center" style="width:33.33%;padding:14px 4px;color:{neon_cyan};font-size:22px;font-weight:700;line-height:1.3;border-left:1px solid {line};border-right:1px solid {line};{font}">{total}<br><span style="color:{dim};font-size:11px;font-weight:400;{font}">条快讯</span></td>'
-        f'<td align="center" style="width:33.33%;padding:14px 4px;color:{neon_pink};font-size:22px;font-weight:700;line-height:1.3;{font}">2<br><span style="color:{dim};font-size:11px;font-weight:400;{font}">今日推送</span></td>'
+        f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;{font}">{len(SOURCE_META)}<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">数据源</span></td>'
+        f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;border-left:1px solid #3d463b;border-right:1px solid #3d463b;{font}">{total}<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">条快讯</span></td>'
+        f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;{font}">18<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">境内外视野</span></td>'
         f'</tr></table>'
 
-        + "".join(source_cards)
+        # Method note comes before the source stream; the author remains the very last line.
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border-left:4px solid {black};">'
+        f'<tr><td style="padding:10px 12px;color:{ink};font-size:12px;line-height:1.7;{font}"><span style="color:{neon_green};background:{black};padding:2px 4px;font-size:10px;">调研方法</span><br>{_esc(intro)}</td></tr></table>'
 
-        + f'<div style="padding:8px 4px 0;color:{dim};font-size:11px;line-height:1.7;text-align:center;{font}">数据仅供参考，不构成投资建议</div>'
+        + "".join(source_cards)
+        + f'<div style="margin:10px 0 0;color:{muted};font-size:10px;line-height:1.5;text-align:center;{font}">数据仅供参考，不构成投资建议</div>'
+        + f'<div style="margin:8px 0 0;padding:10px 4px 0;border-top:1px solid {black};color:{black};font-size:11px;line-height:1.6;text-align:center;font-weight:700;{font}">{_esc(author)}</div>'
         + '</div>'
     )
 
