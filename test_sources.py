@@ -79,6 +79,48 @@ class SourceDefinitionTest(unittest.TestCase):
         self.assertGreaterEqual(len(items), 1)
 
 
+class AnalyzeBriefTest(unittest.TestCase):
+    def _brief(self, titles, sources=("金十数据",)):
+        return {name: [{"title": t, "url": ""} for t in titles] for name in sources}
+
+    def test_returns_expected_fields(self):
+        ana = sources.analyze_brief(self._brief(["现货铂金上涨超过7%", "标普500涨幅扩大至1.5%"]))
+        for key in ("headline", "bias", "bull", "bear", "sectors", "top_themes"):
+            self.assertIn(key, ana)
+        self.assertEqual(ana["bull"] + ana["bear"], 100)
+        self.assertIn(ana["bias"], ("偏多", "偏空", "中性"))
+
+    def test_bullish_input_is_pianduo(self):
+        ana = sources.analyze_brief(self._brief(["标普500涨幅扩大至1.5%", "现货铂金上涨超过7%", "云业务积压订单暴增150%"]))
+        self.assertEqual(ana["bias"], "偏多")
+        self.assertGreater(ana["bull"], ana["bear"])
+
+    def test_bearish_input_is_piankong(self):
+        ana = sources.analyze_brief(self._brief(["债务逾期、25起诉讼待解", "美股暴跌风险警示", "公司被立案面临多重危机"]))
+        self.assertEqual(ana["bias"], "偏空")
+        self.assertLess(ana["bull"], ana["bear"])
+
+    def test_theme_detection(self):
+        ana = sources.analyze_brief(self._brief(["OpenAI 发布 GPT-5 技术预览版", "Anthropic 数据中心大额投资"]))
+        tags = [t[0] for t in ana["top_themes"]]
+        self.assertIn("AI 算力", tags)
+
+    def test_headline_references_top_theme(self):
+        ana = sources.analyze_brief(self._brief(["OpenAI 发布 GPT-5 技术预览版", "AI 编程助手效率对比评测"]))
+        self.assertTrue(any(tag in ana["headline"] for tag in ana["sectors"]))
+
+    def test_empty_brief_is_neutral(self):
+        ana = sources.analyze_brief({})
+        self.assertEqual(ana["bias"], "中性")
+        self.assertEqual((ana["bull"], ana["bear"]), (50, 50))
+
+    def test_demo_brief_has_nonempty_summary(self):
+        brief = {name: sources._demo_items(name) for name in sources.SOURCES}
+        ana = sources.analyze_brief(brief)
+        self.assertTrue(ana["headline"])
+        self.assertTrue(ana["sectors"])
+
+
 class BuildHtmlTest(unittest.TestCase):
     def test_build_html_contains_sources_and_items(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
