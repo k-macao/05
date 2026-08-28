@@ -378,6 +378,42 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 }
 
 #insightText mark { padding: 1px 3px; background: var(--black); color: var(--green); }
+/* AI 观点列表：市场情绪 / 多空博弈 / 板块风向 / 资金流向 */
+.insight-points {
+  margin: 0 0 11px;
+  padding: 9px 0 0;
+  border-top: 1px dashed var(--rule);
+  list-style: none;
+}
+
+.insight-points li {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  padding: 5px 0 1px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.insight-points .point-no {
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.insight-points .point-label {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  background: var(--black);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.insight-points mark { padding: 1px 3px; background: var(--black); color: var(--green); }
+
 .insight-meta { display: flex; gap: 6px; margin-bottom: 9px; flex-wrap: wrap; }
 
 .meta-tag {

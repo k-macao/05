@@ -512,7 +512,7 @@ def collect_all(limit: int = LIMIT) -> dict:
 
 
 # ---------------------------------------------------------------- 开篇 AI 总结引擎
-# 换新方式：不再硬编码「今日一句话」，改为对真实抓取到的标题做
+# 换新方式：不再硬编码「AI 今天给你去噪音，留干货」开篇总结，改为对真实抓取到的标题做
 # 「主题热度 + 多空情绪」统计，每次推送都随数据动态更新，零外部依赖、可离线运行。
 # 如需接入在线大模型，只需覆盖 analyze_brief() 的返回值（字段保持一致即可）。
 
@@ -543,17 +543,26 @@ _BEARISH = ["下跌", "暴跌", "重挫", "新低", "危机", "风险", "警示"
 
 
 def analyze_brief(brief: dict) -> dict:
-    """对采集结果做本地「AI 总结」：主题热度 + 多空博弈概率。
+    """对采集结果做本地「AI 总结」：主题热度 + 多空博弈概率 + 板块风向 + 资金流向。
 
     返回：
-        headline  今日一句话正文（纯文本，引用热度最高的一两个板块）
-        bias      偏多 / 偏空 / 中性
-        bull      多方概率（百分比整数）
-        bear      空方概率（百分比整数）
-        sectors   热度最高的板块标签列表（最多 2 个）
+        headline      「AI 今天给你去噪音，留干货」正文（纯文本，引用热度最高的一两个板块）
+        bias          偏多 / 偏空 / 中性
+        bull          多方概率（百分比整数）
+        bear          空方概率（百分比整数）
+        sectors       热度最高的板块标签列表（最多 2 个）
+        top_themes    全部命中主题 [(标签, 跨源数, 提及数)]，按信号强度排序
+        sectors_up    利好板块（多头信号占优的主题，最多 3 个）
+        sectors_down  利差板块（空头信号占优的主题，最多 2 个，可能为空）
+        flow          资金流向分析句（纯文本）
+        points        开篇四个观点 [{key, label, text}]：
+                      1 市场情绪 2 多空博弈概率 3 利好/利差板块 4 资金流向分析
     """
     theme_sources = {tag: set() for tag, _ in _THEMES}
     theme_mentions = {tag: 0 for tag in theme_sources}
+    # 按主题累计多/空信号：只有方向明确的标题才计入对应主题的多空账。
+    theme_up = {tag: 0 for tag in theme_sources}
+    theme_down = {tag: 0 for tag in theme_sources}
     bull = bear = 0
 
     for name, items in (brief or {}).items():
@@ -566,13 +575,21 @@ def analyze_brief(brief: dict) -> dict:
             down = sum(1 for word in _BEARISH if word in title)
             if up > down:
                 bull += 1
+                direction = 1
             elif down > up:
                 bear += 1
+                direction = -1
+            else:
+                direction = 0
             # 主题：命中即累计，并记录出现在哪些数据源（跨源命中 = 更强信号）。
             for tag, keywords in _THEMES:
                 if any(keyword in title for keyword in keywords):
                     theme_mentions[tag] += 1
                     theme_sources[tag].add(name)
+                    if direction > 0:
+                        theme_up[tag] += 1
+                    elif direction < 0:
+                        theme_down[tag] += 1
 
     ranked = sorted(
         ((tag, len(theme_sources[tag]), theme_mentions[tag]) for tag in theme_sources),
@@ -595,7 +612,35 @@ def analyze_brief(brief: dict) -> dict:
         # 无任何多空信号（例如空简报）：诚实标注中性，不做无依据的方向判断。
         bull_pct, bear_pct, bias = 50, 50, "中性"
 
+    # 利好 / 利差板块：净多头（净空头）信号 > 0 的主题，按信号强度与热度排序。
+    sectors_up = [
+        tag for tag, _, _ in sorted(
+            ((tag, len(theme_sources[tag]), theme_mentions[tag]) for tag in theme_sources
+             if theme_up[tag] > theme_down[tag]),
+            key=lambda entry: (theme_up[entry[0]] - theme_down[entry[0]], entry[1], entry[2]),
+            reverse=True,
+        )[:3]
+    ]
+    sectors_down = [
+        tag for tag, _, _ in sorted(
+            ((tag, len(theme_sources[tag]), theme_mentions[tag]) for tag in theme_sources
+             if theme_down[tag] > theme_up[tag]),
+            key=lambda entry: (theme_down[entry[0]] - theme_up[entry[0]], entry[1], entry[2]),
+            reverse=True,
+        )[:2]
+    ]
+
     headline = _compose_headline(bias, top_themes)
+    flow = _compose_flow(sectors_up, sectors_down, top_themes)
+    points = [
+        {"key": "sentiment", "label": "市场情绪",
+         "text": _compose_sentiment(bias, bull_pct, bear_pct)},
+        {"key": "battle", "label": "多空博弈概率",
+         "text": _compose_battle(bias, bull_pct, bear_pct, bull + bear)},
+        {"key": "sectors", "label": "利好 / 利差板块",
+         "text": _compose_sectors(sectors_up, sectors_down)},
+        {"key": "flow", "label": "资金流向分析", "text": flow},
+    ]
     return {
         "headline": headline,
         "bias": bias,
@@ -603,11 +648,15 @@ def analyze_brief(brief: dict) -> dict:
         "bear": bear_pct,
         "sectors": sectors,
         "top_themes": top_themes,
+        "sectors_up": sectors_up,
+        "sectors_down": sectors_down,
+        "flow": flow,
+        "points": points,
     }
 
 
 def _compose_headline(bias: str, top_themes: list) -> str:
-    """依据多空方向与热度最高的板块，拼出自然的『今日一句话』。"""
+    """依据多空方向与热度最高的板块，拼出自然的「AI 今天给你去噪音，留干货」总结句。"""
     t1 = top_themes[0][0] if top_themes else None
     t2 = top_themes[1][0] if len(top_themes) > 1 else None
 
@@ -628,6 +677,52 @@ def _compose_headline(bias: str, top_themes: list) -> str:
     if t1:
         return f"市场方向未明，{t1}成为焦点但分歧较大，等待更多信号确认。"
     return "市场多空拉锯，方向尚不明朗，建议控制仓位、等待信号。"
+
+
+def _compose_sentiment(bias: str, bull_pct: int, bear_pct: int) -> str:
+    """观点 1：今天市场情绪——由多空占比与方向拼出情绪描述。"""
+    if bias == "偏多":
+        mood = "情绪明显乐观" if bull_pct >= 70 else "情绪偏暖，多方占上风"
+        return f"{mood}，风险偏好回升，但需留意高位轮动分化。"
+    if bias == "偏空":
+        mood = "避险情绪主导" if bear_pct >= 70 else "情绪偏谨慎"
+        return f"{mood}，风险扰动增多，短线以防御为主。"
+    return "多空分歧较大，观望情绪浓，方向选择临近，跟随信号为宜。"
+
+
+def _compose_battle(bias: str, bull_pct: int, bear_pct: int, signals: int) -> str:
+    """观点 2：多空博弈概率——百分比 + 胶着/占优判断 + 样本量。"""
+    if signals <= 0:
+        return "暂无可统计的多空信号，按 50% : 50% 中性看待，等待新数据。"
+    if bull_pct >= 60:
+        verdict = "多方明显占优"
+    elif bull_pct <= 40:
+        verdict = "空方略占上风"
+    else:
+        verdict = "多空胶着，差距有限"
+    return f"多方 {bull_pct}% : 空方 {bear_pct}%，{verdict}（基于 {signals} 条多空信号）。"
+
+
+def _compose_sectors(sectors_up: list, sectors_down: list) -> str:
+    """观点 3：利好板块 / 利差板块——净多、净空信号各自排序取头部。"""
+    up_text = "、".join(sectors_up) if sectors_up else "暂无明确主线，多头信号分散"
+    down_text = "、".join(sectors_down) if sectors_down else "暂无明显承压板块"
+    return f"利好板块：{up_text}　|　利差板块：{down_text}。"
+
+
+def _compose_flow(sectors_up: list, sectors_down: list, top_themes: list) -> str:
+    """观点 4：资金流向分析——净流入看利好板块，回避方向看利差板块。"""
+    parts = []
+    if sectors_up:
+        parts.append(f"资金净流入集中在{'、'.join(sectors_up)}")
+    if sectors_down:
+        parts.append(f"{'、'.join(sectors_down)}相关资产遭资金回避")
+    if parts:
+        return "；".join(parts) + "。"
+    hot = [tag for tag, _, _ in top_themes[:2]]
+    if hot:
+        return f"资金目光聚焦{'、'.join(hot)}，但方向性流入尚不明确，轮动观望为主。"
+    return "样本有限，资金流向暂不明朗，建议等待更多信号确认。"
 
 
 # ---------------------------------------------------------------- 推送 HTML
@@ -694,16 +789,40 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
 
     # 开篇 AI 总结：由 analyze_brief() 依据真实抓取结果动态生成，不再硬编码。
     analysis = analyze_brief(brief)
-    headline = _esc(analysis["headline"])
-    for tag in analysis["sectors"]:
-        tag_esc = _esc(tag)
-        highlight = (
-            f'<span style="color:{neon_green};background:{black};padding:1px 3px;font-weight:700;">{tag_esc}</span>'
+    # 需要荧光绿高亮的板块名：热度主线 + 利好/利差板块（去重保序）。
+    hl_tags = list(dict.fromkeys(
+        analysis["sectors"] + analysis["sectors_up"] + analysis["sectors_down"]
+    ))
+
+    def _hl(escaped_text: str) -> str:
+        """在已转义文本中给板块名套上黑底荧光绿高亮。"""
+        for tag in hl_tags:
+            tag_esc = _esc(tag)
+            escaped_text = escaped_text.replace(
+                tag_esc,
+                f'<span style="color:{neon_green};background:{black};padding:1px 3px;font-weight:700;">{tag_esc}</span>',
+            )
+        return escaped_text
+
+    headline = _hl(_esc(analysis["headline"]))
+
+    # 四个观点：市场情绪 / 多空博弈概率 / 利好·利差板块 / 资金流向分析。
+    point_rows = []
+    for point_index, point in enumerate(analysis["points"], 1):
+        text = _esc(point["text"])
+        if point["key"] in ("sectors", "flow"):
+            text = _hl(text)
+        point_rows.append(
+            f'<tr><td width="24" valign="top" style="width:24px;padding:7px 6px 1px 0;color:{muted};font-size:11px;line-height:1.6;{font}">{point_index:02d}</td>'
+            f'<td style="padding:7px 0 1px;color:{ink};font-size:12px;line-height:1.75;word-break:break-all;{font}">'
+            f'<span style="color:{neon_green};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{_esc(point["label"])}</span>'
+            f' {text}</td></tr>'
         )
-        headline = headline.replace(tag_esc, highlight)
-    sector_line = " / ".join(analysis["sectors"]) if analysis["sectors"] else "综合"
-    bias_line = (
-        f'{analysis["bias"]}　·　{sector_line}　·　多 {analysis["bull"]}% 空 {analysis["bear"]}%'
+    points_html = (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="width:100%;margin:10px 0 0;border-top:1px dashed {rule};">'
+        + "".join(point_rows)
+        + "</table>"
     )
 
     intro = (
@@ -724,12 +843,12 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
         f'<div style="margin:7px 0 0;color:#fff;font-size:12px;line-height:1.55;{font}">全网 AI 调研境内境外数据，由多个大模型混合部署。覆盖 {len(SOURCE_META)} 个数据源。</div>'
         f'</td></tr></table>'
 
-        # One-line insight with green-on-black highlight.
+        # One-line insight plus the four AI viewpoints, green-on-black highlights.
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
         f'<tr><td style="padding:11px 12px 12px;">'
-        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">今日一句话</div>'
+        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 今天给你去噪音，留干货</div>'
         f'<div style="margin:0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{headline}</div>'
-        f'<div style="margin:8px 0 0;color:{muted};font-size:10px;line-height:1.4;{font}">{bias_line}</div>'
+        f'{points_html}'
         f'</td></tr></table>'
 
         # Compact report counters.

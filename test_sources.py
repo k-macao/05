@@ -120,6 +120,44 @@ class AnalyzeBriefTest(unittest.TestCase):
         self.assertTrue(ana["headline"])
         self.assertTrue(ana["sectors"])
 
+    def test_four_viewpoints_present(self):
+        # 开篇四个观点：市场情绪 / 多空博弈概率 / 利好·利差板块 / 资金流向分析。
+        ana = sources.analyze_brief(self._brief(["标普500涨幅扩大至1.5%", "现货铂金上涨超过7%"]))
+        self.assertEqual(
+            [p["label"] for p in ana["points"]],
+            ["市场情绪", "多空博弈概率", "利好 / 利差板块", "资金流向分析"],
+        )
+        self.assertTrue(all(p["text"] for p in ana["points"]))
+        for key in ("sectors_up", "sectors_down", "flow"):
+            self.assertIn(key, ana)
+
+    def test_battle_point_has_percent_and_sample_size(self):
+        ana = sources.analyze_brief(self._brief(["标普500涨幅扩大至1.5%", "美股暴跌风险警示"]))
+        battle = next(p["text"] for p in ana["points"] if p["key"] == "battle")
+        self.assertIn("多方", battle)
+        self.assertIn("%", battle)
+        self.assertIn("多空信号", battle)
+
+    def test_bullish_and_bearish_sectors_split(self):
+        titles = [
+            "AI 算力投资创纪录，数据中心扩产超预期",
+            "光模块订单暴增，光通信景气度回升",
+            "地产股债务逾期风险警示，房价承压下跌",
+        ]
+        ana = sources.analyze_brief(self._brief(titles))
+        self.assertIn("AI 算力", ana["sectors_up"])
+        self.assertNotIn("地产", ana["sectors_up"])
+        self.assertIn("地产", ana["sectors_down"])
+        self.assertIn("地产", ana["flow"])
+        self.assertIn("回避", ana["flow"])
+
+    def test_empty_brief_points_are_honest(self):
+        ana = sources.analyze_brief({})
+        self.assertEqual(ana["sectors_up"], [])
+        self.assertEqual(ana["sectors_down"], [])
+        battle = next(p["text"] for p in ana["points"] if p["key"] == "battle")
+        self.assertIn("暂无", battle)
+
 
 class BuildHtmlTest(unittest.TestCase):
     def test_build_html_contains_sources_and_items(self):
@@ -128,6 +166,17 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertIn("覆盖 18 个数据源", out)
         self.assertIn("金十数据", out)
         self.assertIn("不构成投资建议", out)
+
+    def test_build_html_renders_four_viewpoints(self):
+        brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
+        out = sources.build_html(brief)
+        for label in ("市场情绪", "多空博弈概率", "利好 / 利差板块", "资金流向分析"):
+            self.assertIn(label, out)
+
+    def test_build_html_empty_brief_renders_points_fallback(self):
+        out = sources.build_html({})
+        self.assertIn("暂无可统计的多空信号", out)
+        self.assertIn("资金流向分析", out)
 
     def test_escapes_html(self):
         out = sources.build_html({"金十数据": [{"title": "<b>x</b>", "url": ""}]})
