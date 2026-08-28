@@ -512,7 +512,7 @@ def collect_all(limit: int = LIMIT) -> dict:
 
 
 # ---------------------------------------------------------------- 开篇 AI 总结引擎
-# 换新方式：不再硬编码「今日一句话」，改为对真实抓取到的标题做
+# 换新方式：不再硬编码「AI 今天给你去噪音，留干货」开篇总结，改为对真实抓取到的标题做
 # 「主题热度 + 多空情绪」统计，每次推送都随数据动态更新，零外部依赖、可离线运行。
 # 如需接入在线大模型，只需覆盖 analyze_brief() 的返回值（字段保持一致即可）。
 
@@ -546,7 +546,7 @@ def analyze_brief(brief: dict) -> dict:
     """对采集结果做本地「AI 总结」：主题热度 + 多空博弈概率。
 
     返回：
-        headline  今日一句话正文（纯文本，引用热度最高的一两个板块）
+        headline  「AI 今天给你去噪音，留干货」正文（纯文本，引用热度最高的一两个板块）
         bias      偏多 / 偏空 / 中性
         bull      多方概率（百分比整数）
         bear      空方概率（百分比整数）
@@ -607,7 +607,7 @@ def analyze_brief(brief: dict) -> dict:
 
 
 def _compose_headline(bias: str, top_themes: list) -> str:
-    """依据多空方向与热度最高的板块，拼出自然的『今日一句话』。"""
+    """依据多空方向与热度最高的板块，拼出自然的「AI 今天给你去噪音，留干货」总结句。"""
     t1 = top_themes[0][0] if top_themes else None
     t2 = top_themes[1][0] if len(top_themes) > 1 else None
 
@@ -727,7 +727,7 @@ def build_html(brief: dict, now: datetime | None = None) -> str:
         # One-line insight with green-on-black highlight.
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
         f'<tr><td style="padding:11px 12px 12px;">'
-        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">今日一句话</div>'
+        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 今天给你去噪音，留干货</div>'
         f'<div style="margin:0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{headline}</div>'
         f'<div style="margin:8px 0 0;color:{muted};font-size:10px;line-height:1.4;{font}">{bias_line}</div>'
         f'</td></tr></table>'
