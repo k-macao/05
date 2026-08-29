@@ -184,5 +184,104 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertNotIn("<b>x</b>", out)
 
 
+class AshareReviewTest(unittest.TestCase):
+    """前日 A 股六维度复盘：内容策略、数据解析、复盘日选取、离线兜底与 HTML 渲染。"""
+
+    CANDLE = ("2026-08-27,3911.89,3956.57,3958.03,3909.31,516777549,"
+              "1010226573954.60,1.25,1.13,44.05,1.07")
+
+    def test_parse_candle(self):
+        candle = sources._parse_ashare_candle(self.CANDLE)
+        self.assertEqual(candle["date"], "2026-08-27")
+        self.assertEqual(candle["close"], 3956.57)
+        self.assertEqual(candle["pct"], 1.13)
+        self.assertEqual(candle["change"], 44.05)
+        self.assertEqual(candle["amount"], 1010226573954.60)
+        self.assertIsNone(sources._parse_ashare_candle(""))
+
+    def test_pick_review_date_is_day_before_yesterday(self):
+        # 今天 2026-08-29（周六）→「前天」复盘日 = 2026-08-27（最近交易日）。
+        klines = {
+            "上证指数": {"2026-08-27": {}, "2026-08-28": {}},
+            "深证成指": {"2026-08-27": {}},
+        }
+        from datetime import date
+        self.assertEqual(sources._pick_review_date(klines, date(2026, 8, 29)), "2026-08-27")
+        # 周一 2026-08-31：前天是周六无交易，回溯到 2026-08-28（周五）。
+        self.assertEqual(sources._pick_review_date(klines, date(2026, 8, 31)), "2026-08-28")
+
+    def test_analyze_ashare_has_six_dimensions(self):
+        review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
+        self.assertEqual(review["date"], "2026-08-27")
+        self.assertEqual(
+            [p["label"] for p in review["points"]],
+            ["三大指数", "两市成交额", "涨跌家数与涨跌停",
+             "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"],
+        )
+        self.assertTrue(all(p["text"] for p in review["points"]))
+        self.assertIn(review["bias"], ("偏多", "偏空", "中性"))
+
+    def test_analyze_ashare_snapshot_content(self):
+        review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
+        texts = {p["label"]: p["text"] for p in review["points"]}
+        # ① 指数：四大指数收盘与涨幅
+        self.assertIn("3956.57", texts["三大指数"])
+        self.assertIn("科创50", texts["三大指数"])
+        # ② 成交额：2.13 万亿、放量 3172 亿（与新浪/每经收评交叉核对口径）
+        self.assertIn("2.13 万亿", texts["两市成交额"])
+        self.assertIn("3,172 亿", texts["两市成交额"])
+        # ③ 涨跌家数与涨跌停：涨停 77 / 跌停 3 / 封板率 82%
+        self.assertIn("涨停 77 家", texts["涨跌家数与涨跌停"])
+        self.assertIn("跌停 3 家", texts["涨跌家数与涨跌停"])
+        # ④ 领涨/领跌板块
+        self.assertIn("算力硬件", texts["领涨 / 领跌板块"])
+        self.assertIn("银行", texts["领涨 / 领跌板块"])
+        # ⑤ 北向口径说明
+        self.assertIn("北向资金", texts["主力资金与北向资金"])
+        # ⑥ 后市观点与策略
+        self.assertIn("AI 研判", texts["后市观点与策略"])
+        self.assertIn("浙商证券", texts["后市观点与策略"])
+
+    def test_snapshot_headline_mentions_leaders(self):
+        review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
+        self.assertIn("算力硬件", review["headline"])
+        self.assertIn("存储芯片", review["headline"])
+
+    def test_get_ashare_market_falls_back_offline(self):
+        # 无外网环境（如 CI 沙箱）：网络层抛错时必须回退内置真实快照，绝不空转。
+        original = sources.urlopen
+
+        def _offline(*args, **kwargs):
+            raise OSError("network unreachable")
+
+        sources.urlopen = _offline
+        try:
+            market = sources.get_ashare_market()
+        finally:
+            sources.urlopen = original
+        self.assertEqual(market["date"], "2026-08-27")
+        self.assertEqual(market["source"], "snapshot")
+
+    def test_build_html_renders_ashare_review_card(self):
+        brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
+        review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
+        out = sources.build_html(brief, review=review)
+        self.assertIn("AI 复盘 · 前日 A 股", out)
+        self.assertIn("2026-08-27", out)
+        for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
+                      "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"):
+            self.assertIn(label, out)
+        self.assertIn("偏多", out)
+
+    def test_review_sector_names_are_escaped(self):
+        market = dict(sources._ASHARE_SNAPSHOT)
+        market["leaders"] = [{"name": "<算力>", "note": "x"}]
+        market["laggards"] = [{"name": "银行", "note": "x"}]
+        brief = {"金十数据": [{"title": "x", "url": ""}]}
+        out = sources.build_html(brief, review=sources.analyze_ashare(market=market))
+        self.assertIn("&lt;算力&gt;", out)
+        self.assertNotIn("<算力>", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
