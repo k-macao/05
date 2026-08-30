@@ -210,9 +210,18 @@ class AshareReviewTest(unittest.TestCase):
         # 周一 2026-08-31：前天是周六无交易，回溯到 2026-08-28（周五）。
         self.assertEqual(sources._pick_review_date(klines, date(2026, 8, 31)), "2026-08-28")
 
+    def test_get_fallback_review_date(self):
+        from datetime import date
+        # 周日 2026-08-30 → 前天周五 2026-08-28
+        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 30)), "2026-08-28")
+        # 周一 2026-08-31 → 周六无交易，向前回溯到周五 2026-08-28
+        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 31)), "2026-08-28")
+        # 周六 2026-08-29 → 前天周四 2026-08-27
+        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 29)), "2026-08-27")
+
     def test_analyze_ashare_has_six_dimensions(self):
         review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
-        self.assertEqual(review["date"], "2026-08-27")
+        self.assertEqual(review["date"], sources._ASHARE_SNAPSHOT["date"])
         self.assertEqual(
             [p["label"] for p in review["points"]],
             ["三大指数", "两市成交额", "涨跌家数与涨跌停",
@@ -248,7 +257,7 @@ class AshareReviewTest(unittest.TestCase):
         self.assertIn("存储芯片", review["headline"])
 
     def test_get_ashare_market_falls_back_offline(self):
-        # 无外网环境（如 CI 沙箱）：网络层抛错时必须回退内置真实快照，绝不空转。
+        # 无外网环境（如 CI 沙箱）：网络层抛错时必须回退内置真实快照（且复盘日期基于当前日期动态推导），绝不空转。
         original = sources.urlopen
 
         def _offline(*args, **kwargs):
@@ -259,7 +268,7 @@ class AshareReviewTest(unittest.TestCase):
             market = sources.get_ashare_market()
         finally:
             sources.urlopen = original
-        self.assertEqual(market["date"], "2026-08-27")
+        self.assertEqual(market["date"], sources._get_fallback_review_date())
         self.assertEqual(market["source"], "snapshot")
 
     def test_build_html_renders_ashare_review_card(self):
@@ -267,7 +276,7 @@ class AshareReviewTest(unittest.TestCase):
         review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
         out = sources.build_html(brief, review=review)
         self.assertIn("AI 复盘 · 前日 A 股", out)
-        self.assertIn("2026-08-27", out)
+        self.assertIn(sources._ASHARE_SNAPSHOT["date"], out)
         for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
                       "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"):
             self.assertIn(label, out)

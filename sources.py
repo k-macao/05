@@ -752,7 +752,7 @@ _ASHARE_TIMEOUT = 6
 # 数据来源：东方财富日 K/涨停池接口实测，与新浪财经、每日经济新闻、财联社当日收评交叉核对一致
 # （两市 2.13 万亿、放量 3172 亿、涨停 77 家 / 跌停 3 家等口径全部对上）。
 _ASHARE_SNAPSHOT = {
-    "date": "2026-08-27",
+    "date": "2026-08-28",
     "source": "snapshot",
     "indices": [
         {"name": "上证指数", "close": 3956.57, "pct": 1.13, "change": 44.05},
@@ -856,6 +856,16 @@ def _pick_review_date(klines: dict, today) -> str | None:
     return dates[0] if dates else None
 
 
+def _get_fallback_review_date(today=None) -> str:
+    """基于『今天』推导的前日复盘交易日（≤ 今天-2 天的最近交易日，离线/兜底时使用）。"""
+    if today is None:
+        today = _ashare_today()
+    target = today - timedelta(days=2)
+    while target.weekday() >= 5:
+        target -= timedelta(days=1)
+    return str(target)
+
+
 def _fetch_ashare_pools(review_date: str) -> dict:
     """涨停/跌停池（按日回溯）：家数 + 涨停行业分布（领涨线索）+ 跌停行业分布（领跌线索）。"""
     out = {"limit_up": None, "limit_down": None, "hot_sectors": [], "cold_sectors": []}
@@ -894,12 +904,15 @@ def _fetch_ashare_pools(review_date: str) -> dict:
 
 def get_ashare_market() -> dict:
     """采集「前天」A 股行情：东方财富接口优先，任何失败回退内置真实快照。"""
+    today = _ashare_today()
+    fallback_date = _get_fallback_review_date(today)
     try:
-        today = _ashare_today()
         klines = _fetch_ashare_klines()
         review_date = _pick_review_date(klines, today)
         if not review_date:
-            return _ASHARE_SNAPSHOT
+            snapshot = dict(_ASHARE_SNAPSHOT)
+            snapshot["date"] = fallback_date
+            return snapshot
 
         indices = []
         for name, _secid in _ASHARE_INDICES:
@@ -912,7 +925,9 @@ def get_ashare_market() -> dict:
                     "change": candle["change"],
                 })
         if len(indices) < 3:
-            return _ASHARE_SNAPSHOT
+            snapshot = dict(_ASHARE_SNAPSHOT)
+            snapshot["date"] = fallback_date
+            return snapshot
 
         # 两市成交额：沪市（上证）+ 深市（深成）日 K 的成交额（单位：元 → 亿元）。
         sh = (klines.get("上证指数") or {}).get(review_date)
@@ -955,7 +970,9 @@ def get_ashare_market() -> dict:
             "outlook": {"views": [], "catalyst": None},
         }
     except Exception:
-        return _ASHARE_SNAPSHOT
+        snapshot = dict(_ASHARE_SNAPSHOT)
+        snapshot["date"] = fallback_date
+        return snapshot
 
 
 def _ashare_bias(market: dict) -> str:

@@ -12,6 +12,18 @@ const runState=runBtn.querySelector('.run-state');
 const refreshBtn=document.querySelector('#refreshBtn');
 const lastRefreshEl=document.querySelector('#lastRefresh');
 const statSourcesEl=document.querySelector('#statSources');
+const reviewDateEl=document.querySelector('#reviewDate');
+
+function getFallbackReviewDate(){
+  const now=new Date();
+  const utc=now.getTime()+(now.getTimezoneOffset()*60000);
+  const bj=new Date(utc+(3600000*8));
+  bj.setDate(bj.getDate()-2);
+  while(bj.getDay()===0||bj.getDay()===6){bj.setDate(bj.getDate()-1);}
+  const yyyy=bj.getFullYear(),mm=String(bj.getMonth()+1).padStart(2,'0'),dd=String(bj.getDate()).padStart(2,'0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+if(reviewDateEl){reviewDateEl.textContent='复盘日 '+getFallbackReviewDate();}
 
 function showToast(text){toast.textContent=text;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600)}
 
