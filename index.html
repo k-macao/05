@@ -7,7 +7,7 @@
   <meta name="author" content="章鱼 ai" />
   <meta name="theme-color" content="#ecefea" />
   <title>章鱼 AI 全景分析</title>
-  <link rel="stylesheet" href="styles.css?v=20260829" />
+  <link rel="stylesheet" href="styles.css?v=20260831" />
 </head>
 <body>
   <div class="crt-overlay" aria-hidden="true"></div>
@@ -100,7 +100,10 @@
     <section class="pixel-section">
       <div class="pixel-section-head">
         <div><span class="kicker">AI REVIEW</span><h2>AI 复盘 · 前日 A 股</h2></div>
-        <span class="ai-pill">✦ 六维度策略</span>
+        <div class="pill-group">
+          <span class="ai-pill">✦ 六维度策略</span>
+          <span class="meta-tag market-tag" id="marketFreshTag" title="推送前检查：大盘数据不是最新就不推">大盘数据 · 检查中</span>
+        </div>
       </div>
       <article class="review-card" id="reviewCard">
         <div class="review-head">
@@ -123,7 +126,7 @@
           <li><span class="point-no">06</span><span class="point-label">后市观点与策略</span><span>短线偏多但防高位轮动；催化：英伟达财报超预期；机构观点：未来 1-2 周是关键变盘窗口，9 月科技仍是核心主线。</span></li>
         </ul>
         <div class="insight-foot">
-          <span>行情数据：东方财富接口 → 内置真实快照兜底</span>
+          <span>行情数据：东方财富接口 → 内置快照兜底 · 推送前校验新鲜度，非最新自动拦截</span>
         </div>
       </article>
     </section>
@@ -160,6 +163,6 @@
   </main>
 
   <div class="toast" id="toast">正在生成今日简报…</div>
-  <script src="app.js?v=20260829"></script>
+  <script src="app.js?v=20260831"></script>
 </body>
 </html>

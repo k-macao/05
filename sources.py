@@ -21,12 +21,15 @@
     analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
     get_ashare_market(): 采集「前天」A 股行情（东方财富接口 → 内置快照兜底）
     analyze_ashare()   : 前日 A 股六维度复盘引擎（三大指数/成交额/涨跌家数/板块/资金/后市）
+    check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
+    collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
     build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报
 """
 from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -904,10 +907,17 @@ def _fetch_ashare_pools(review_date: str) -> dict:
 
 def get_ashare_market() -> dict:
     """采集「前天」A 股行情：东方财富接口优先，任何失败回退内置真实快照。"""
-    today = _ashare_today()
+    return _build_ashare_market(_fetch_ashare_klines(), _ashare_today())
+
+
+def _build_ashare_market(klines: dict, today) -> dict:
+    """由已抓取的日 K 组装「前天」复盘行情（东方财富 → 内置快照兜底）。
+
+    与网络解耦：日 K 由调用方传入（`get_ashare_market()` 抓一次网络，
+    `collect_market_for_push()` 复用同一次结果做新鲜度检查），便于测试注入。
+    """
     fallback_date = _get_fallback_review_date(today)
     try:
-        klines = _fetch_ashare_klines()
         review_date = _pick_review_date(klines, today)
         if not review_date:
             snapshot = dict(_ASHARE_SNAPSHOT)
@@ -973,6 +983,94 @@ def get_ashare_market() -> dict:
         snapshot = dict(_ASHARE_SNAPSHOT)
         snapshot["date"] = fallback_date
         return snapshot
+
+
+# ---------------------------------------------------------------- 大盘数据新鲜度闸门
+# 推送前检查：简报里的「大盘数据」必须是最新的，不是最新就不推。
+# 判定标准（三条全过才算「最新」）：
+#   ① 行情接口可用——拿不到日 K 就无法确认数据新旧，宁可不放行；
+#   ② 接口数据不滞后——最新日 K 不得早于内置快照基线日期（日期只会向前走，
+#      一旦倒退说明行情源异常）；
+#   ③ 大盘复盘数据来自实时接口（非内置快照兜底），且复盘日 = 按「前天」口径
+#      应复盘的最近交易日（接口数据自动覆盖周末/长假回溯）。
+
+def check_market_freshness(market: dict | None = None,
+                           klines: dict | None = None,
+                           today=None) -> dict:
+    """检查大盘复盘数据是否为最新。返回：
+
+        ok                是否最新（推送闸门以此为据）
+        reason            人类可读结论（含具体日期，可直接进日志/推送提示）
+        market_date       本次大盘复盘数据的日期
+        source            数据来源（eastmoney 实时接口 / snapshot 内置快照）
+        latest_kline_date 行情接口最新一根日 K 的日期（接口视角的“今天”）
+        expected_date     按「前天」口径应复盘的最近交易日
+        checked_at        检查时间（北京时间）
+    """
+    today = today or _ashare_today()
+    if klines is None:
+        klines = _fetch_ashare_klines()
+    if market is None:
+        market = _build_ashare_market(klines, today)
+
+    dates = sorted({d for candles in klines.values() for d in candles}, reverse=True)
+    info = {
+        "ok": False,
+        "reason": "",
+        "market_date": market.get("date") or "",
+        "source": market.get("source") or "snapshot",
+        "latest_kline_date": dates[0] if dates else "",
+        "expected_date": "",
+        "checked_at": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    if not dates:
+        info["reason"] = ("行情接口不可用，无法确认大盘数据为最新"
+                          f"（当前兜底：内置快照，复盘日 {info['market_date'] or '未知'}）")
+        return info
+
+    expected = _pick_review_date(klines, today)
+    info["expected_date"] = expected or ""
+    floor = _ASHARE_SNAPSHOT["date"]  # 已知基线：接口最新日 K 不可能早于内置快照日期
+
+    if dates[0] < floor:
+        info["reason"] = (f"行情接口数据滞后：最新日 K {dates[0]} 早于内置快照基线 {floor}"
+                          "，判定非最新")
+        return info
+    if market.get("source") != "eastmoney":
+        info["reason"] = (f"大盘数据回退内置快照（冻结于 {floor}），非实时接口数据，"
+                          f"无法确认为最新（应复盘交易日 {expected or '未知'}）")
+        return info
+    if not expected or market.get("date") != expected:
+        info["reason"] = (f"大盘复盘日 {info['market_date'] or '未知'} 与最新可复盘交易日 "
+                          f"{expected or '未知'} 不一致，判定非最新")
+        return info
+
+    info["ok"] = True
+    info["reason"] = f"大盘数据为最新：复盘交易日 {expected}（数据来源：东方财富实时行情接口）"
+    return info
+
+
+def collect_market_for_push() -> tuple[dict, dict]:
+    """推送入口专用：一次抓取完成「大盘数据 + 新鲜度检查」。
+
+    返回 (market, freshness)：market 供 analyze_ashare() 渲染复盘板块，
+    freshness 供推送闸门判定「不是最新就不推」。日 K 只抓一次，两处共用。
+
+    环境变量 MARKET_FRESHNESS_FORCE=fresh|stale 可强制检查结果（测试/应急用，
+    正常推送不要设置）。
+    """
+    today = _ashare_today()
+    klines = _fetch_ashare_klines()
+    market = _build_ashare_market(klines, today)
+    freshness = check_market_freshness(market, klines=klines, today=today)
+
+    force = os.environ.get("MARKET_FRESHNESS_FORCE", "").strip().lower()
+    if force in ("fresh", "stale"):
+        freshness["forced"] = True
+        freshness["ok"] = force == "fresh"
+        freshness["reason"] = f"MARKET_FRESHNESS_FORCE={force} 强制结果（测试/应急）：" + freshness["reason"]
+    return market, freshness
 
 
 def _ashare_bias(market: dict) -> str:

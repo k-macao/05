@@ -528,6 +528,13 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 }
 
 .meta-tag.neutral { background: var(--green); color: var(--black); }
+
+/* 大盘数据新鲜度标签（推送闸门：不是最新就不推） */
+.pill-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.market-tag { cursor: help; }
+.market-tag.ok { background: var(--green); color: var(--black); }
+.market-tag.bad { background: #2a1210; color: #ff8d7e; border-color: #6e332b; }
+
 .insight-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ink-soft); font-size: 10px; }
 
 .arrow-btn,

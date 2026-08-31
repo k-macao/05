@@ -6,8 +6,14 @@
 可选：
     PUSHPLUS_API_URL=...     覆盖推送地址（测试时指向本地假 PushPlus）
     PUSHPLUS_TOPIC=...       覆盖群组编码（默认 oai.1，一对多群组推送）
+    MARKET_FRESHNESS_FORCE=fresh|stale  强制大盘数据检查结果（测试/应急用）
+    SKIP_MARKET_CHECK=1      跳过大盘数据新鲜度检查（测试/应急用，不建议日常开启）
 
-退出码：0 成功，1 未配置 token，2 推送失败。
+推送前会先做「大盘数据新鲜度检查」：简报里的 A 股复盘数据必须来自实时行情接口、
+且复盘日等于最近一个可复盘交易日；不是最新（行情接口不可用 / 回退内置快照 /
+接口数据滞后）就放弃本次推送，退出码 3（GitHub Actions 显示为失败，便于发现）。
+
+退出码：0 成功，1 未配置 token，2 推送失败，3 大盘数据非最新（已跳过推送）。
 """
 import json
 import os
@@ -40,13 +46,18 @@ PUSHPLUS_ERROR_HINTS = {
 }
 
 
-def build_content(now):
+def build_content(now, review=None):
     """真实抓取 18 个数据源并渲染 HTML 简报（网络不可用时自动回退内置演示数据）。"""
     try:
         brief = sources.collect_all()
     except Exception:
         brief = {}
-    return sources.build_html(brief, now=now)
+    return sources.build_html(brief, now=now, review=review)
+
+
+def _skip_market_check() -> bool:
+    """SKIP_MARKET_CHECK=1/true/yes/on 时跳过大盘数据新鲜度检查（测试/应急）。"""
+    return os.environ.get("SKIP_MARKET_CHECK", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def main():
@@ -63,10 +74,31 @@ def main():
     else:
         print("诊断：未配置群组编码，本次为一对一推送", flush=True)
 
+    # ── 推送前检查：大盘数据必须是最新，不是最新就不推 ──
+    market, freshness = sources.collect_market_for_push()
+    print(
+        "大盘数据检查：复盘日 {market_date}｜来源 {source}｜"
+        "接口最新日K {latest_kline_date}｜应复盘交易日 {expected_date}".format(
+            market_date=freshness.get("market_date") or "未知",
+            source=freshness.get("source") or "未知",
+            latest_kline_date=freshness.get("latest_kline_date") or "无",
+            expected_date=freshness.get("expected_date") or "未知",
+        ),
+        flush=True,
+    )
+    if _skip_market_check():
+        print("警告：SKIP_MARKET_CHECK 已启用，跳过大盘数据新鲜度检查（仅限测试/应急）", flush=True)
+    elif not freshness.get("ok"):
+        print(f"跳过推送：大盘数据非最新——{freshness.get('reason')}", flush=True)
+        print(f"诊断：{json.dumps(freshness, ensure_ascii=False)}", flush=True)
+        return 3
+    else:
+        print(f"大盘数据检查通过：{freshness.get('reason')}", flush=True)
+
     payload = {
         "token": token,
         "title": "章鱼 AI 全景分析",
-        "content": build_content(datetime.now()),
+        "content": build_content(datetime.now(), review=sources.analyze_ashare(market)),
         "template": "html",
     }
     if TOPIC:

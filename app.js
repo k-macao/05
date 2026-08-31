@@ -25,7 +25,7 @@ function getFallbackReviewDate(){
 }
 if(reviewDateEl){reviewDateEl.textContent='复盘日 '+getFallbackReviewDate();}
 
-function showToast(text){toast.textContent=text;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600)}
+function showToast(text,ms=2600){toast.textContent=text;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),ms)}
 
 function updateRefreshTime(){if(lastRefreshEl){const now=new Date();lastRefreshEl.textContent=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;}}
 
@@ -54,6 +54,32 @@ function renderSources(sources){
   if(statSourcesEl) statSourcesEl.textContent=sources.length;
 })();
 
+// 大盘数据新鲜度：与推送闸门同一套检查（不是最新就不推），此处把结果展示出来。
+const marketFreshTag=document.querySelector('#marketFreshTag');
+async function loadMarketStatus(){
+  if(!marketFreshTag) return;
+  try{
+    const res=await fetch('api/market');
+    if(!res.ok) throw new Error(String(res.status));
+    const data=await res.json();
+    const f=data.freshness||{};
+    if(f.ok){
+      marketFreshTag.textContent=`大盘数据最新 · 复盘日 ${data.date||f.market_date||'--'}`;
+      marketFreshTag.classList.add('ok');
+    }else{
+      marketFreshTag.textContent='大盘数据非最新 · 推送已拦截';
+      marketFreshTag.classList.add('bad');
+    }
+    marketFreshTag.title=f.reason||marketFreshTag.title;
+    if(reviewDateEl&&data.date){reviewDateEl.textContent='复盘日 '+data.date;}
+  }catch(e){
+    marketFreshTag.textContent='大盘数据 · 状态未知';
+    marketFreshTag.classList.add('bad');
+    marketFreshTag.title='后端 /api/market 不可用（静态托管或服务未启动）';
+  }
+}
+loadMarketStatus();
+
 // 手动运行：调用后端 /api/run 完成聚合、AI 总结与 PushPlus 推送；github.io 静态托管下改为跳转 Actions 手动触发。
 runBtn.onclick=async()=>{
   if(isGithubPages){
@@ -71,11 +97,12 @@ runBtn.onclick=async()=>{
       const data=await res.json();
       showToast((data&&data.message)||'简报已生成，将推送至 PushPlus');
     }else{
-      // 优先展示服务端返回的真实原因（如 503 未配置 token），静态托管等场景下 405 给出明确指引。
+      // 优先展示服务端返回的真实原因（如 503 未配置 token、409 大盘数据非最新已拦截），
+      // 静态托管等场景下 405 给出明确指引。
       let message=null;
       try{const data=await res.json();if(data&&data.message)message=data.message;}catch(e){/* 非 JSON 错误体 */ }
       if(res.status===405) message='当前页面由静态托管提供，不支持 POST /api/run，请改用 server.py 启动服务';
-      showToast(message||`后端返回 ${res.status}，请检查服务`);
+      showToast(message||`后端返回 ${res.status}，请检查服务`,res.status===409?6000:2600);
     }
   }catch(e){
     showToast('无法连接推送服务，请确认后端正在运行');

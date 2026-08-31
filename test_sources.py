@@ -4,7 +4,9 @@
 零第三方依赖，直接运行：
     python3 test_sources.py
 """
+import os
 import unittest
+from datetime import date
 
 import sources
 
@@ -290,6 +292,107 @@ class AshareReviewTest(unittest.TestCase):
         out = sources.build_html(brief, review=sources.analyze_ashare(market=market))
         self.assertIn("&lt;算力&gt;", out)
         self.assertNotIn("<算力>", out)
+
+
+class MarketFreshnessTest(unittest.TestCase):
+    """推送前大盘数据新鲜度检查：不是最新就不推。
+
+    行情接口全部走本地注入的日 K，杜绝测试依赖外网。
+    场景基准：today = 2026-08-31（周一），「前天」= 周六 → 应复盘交易日 = 2026-08-28（周五）。
+    """
+
+    TODAY = date(2026, 8, 31)
+    EXPECTED = "2026-08-28"
+
+    def setUp(self):
+        self._orig_klines = sources._fetch_ashare_klines
+        self._orig_pools = sources._fetch_ashare_pools
+        # 涨停/跌停池与网络无关：注入空结果即可。
+        sources._fetch_ashare_pools = lambda review_date: {
+            "limit_up": None, "limit_down": None, "hot_sectors": [], "cold_sectors": []}
+
+    def tearDown(self):
+        sources._fetch_ashare_klines = self._orig_klines
+        sources._fetch_ashare_pools = self._orig_pools
+        os.environ.pop("MARKET_FRESHNESS_FORCE", None)
+
+    def _klines(self, *dates):
+        """构造四大指数的日 K：{指数名: {日期: candle}}。"""
+        out = {}
+        for name in ("上证指数", "深证成指", "创业板指", "科创50"):
+            out[name] = {
+                d: sources._parse_ashare_candle(
+                    f"{d},3900.0,3950.0,3960.0,3890.0,1000000,200000000000.0,1.8,1.28,50.0,1.0")
+                for d in dates
+            }
+        return out
+
+    def test_fresh_market_passes_gate(self):
+        # 接口正常：最新日 K = 今天（盘中），复盘日 = 周五 2026-08-28 → 放行。
+        klines = self._klines("2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31")
+        market = sources._build_ashare_market(klines, self.TODAY)
+        fresh = sources.check_market_freshness(market, klines=klines, today=self.TODAY)
+        self.assertTrue(fresh["ok"], fresh["reason"])
+        self.assertEqual(fresh["market_date"], self.EXPECTED)
+        self.assertEqual(fresh["expected_date"], self.EXPECTED)
+        self.assertEqual(fresh["latest_kline_date"], "2026-08-31")
+        self.assertEqual(fresh["source"], "eastmoney")
+        self.assertIn("最新", fresh["reason"])
+
+    def test_offline_snapshot_is_blocked(self):
+        # 行情接口不可用 → 无法确认数据新旧 → 拦截（宁可不放行）。
+        fresh = sources.check_market_freshness(klines={}, today=self.TODAY)
+        self.assertFalse(fresh["ok"])
+        self.assertIn("行情接口不可用", fresh["reason"])
+        self.assertEqual(fresh["source"], "snapshot")
+
+    def test_lagging_feed_is_blocked(self):
+        # 接口能通，但最新日 K 早于内置快照基线 → 行情源异常 → 拦截。
+        klines = self._klines("2026-08-19", "2026-08-20")
+        market = sources._build_ashare_market(klines, self.TODAY)
+        fresh = sources.check_market_freshness(market, klines=klines, today=self.TODAY)
+        self.assertFalse(fresh["ok"])
+        self.assertIn("滞后", fresh["reason"])
+
+    def test_stale_review_date_is_blocked(self):
+        # 数据来源是实时接口，但复盘日落后于应复盘交易日 → 拦截。
+        klines = self._klines("2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31")
+        market = {"date": "2026-08-26", "source": "eastmoney"}
+        fresh = sources.check_market_freshness(market, klines=klines, today=self.TODAY)
+        self.assertFalse(fresh["ok"])
+        self.assertIn("不一致", fresh["reason"])
+
+    def test_snapshot_fallback_is_blocked_even_if_date_matches(self):
+        # 即便快照日期恰好等于应复盘日，数值也是冻结的旧数据 → 仍按非最新拦截。
+        klines = self._klines("2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31")
+        market = {"date": self.EXPECTED, "source": "snapshot"}
+        fresh = sources.check_market_freshness(market, klines=klines, today=self.TODAY)
+        self.assertFalse(fresh["ok"])
+        self.assertIn("内置快照", fresh["reason"])
+
+    def test_collect_market_for_push_returns_both(self):
+        # 推送入口：一次抓取同时返回 market 与 freshness，且两者指向同一份日 K。
+        klines = self._klines("2026-08-27", "2026-08-28", "2026-08-31")
+        sources._fetch_ashare_klines = lambda: klines
+        market, fresh = sources.collect_market_for_push()
+        self.assertEqual(market["date"], self.EXPECTED)
+        self.assertTrue(fresh["ok"], fresh["reason"])
+
+    def test_force_env_pins_gate_result(self):
+        # MARKET_FRESHNESS_FORCE=fresh|stale（测试/应急）可以强制检查结果。
+        klines = self._klines("2026-08-27", "2026-08-28", "2026-08-31")
+        sources._fetch_ashare_klines = lambda: klines
+
+        os.environ["MARKET_FRESHNESS_FORCE"] = "stale"
+        _, fresh = sources.collect_market_for_push()
+        self.assertFalse(fresh["ok"])
+        self.assertTrue(fresh.get("forced"))
+        self.assertIn("MARKET_FRESHNESS_FORCE=stale", fresh["reason"])
+
+        os.environ["MARKET_FRESHNESS_FORCE"] = "fresh"
+        _, fresh = sources.collect_market_for_push()
+        self.assertTrue(fresh["ok"])
+        self.assertTrue(fresh.get("forced"))
 
 
 if __name__ == "__main__":
