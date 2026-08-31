@@ -199,7 +199,86 @@ class AshareReviewTest(unittest.TestCase):
         self.assertEqual(candle["pct"], 1.13)
         self.assertEqual(candle["change"], 44.05)
         self.assertEqual(candle["amount"], 1010226573954.60)
+        self.assertEqual(candle["source"], "eastmoney")
         self.assertIsNone(sources._parse_ashare_candle(""))
+
+    def test_parse_tencent_candle(self):
+        # 备用源（腾讯）行格式：[date, open, close, high, low, volume]，涨跌由前收推算。
+        row = ["2026-08-28", "3911.89", "3956.57", "3958.03", "3909.31", "516777549.00"]
+        candle = sources._parse_tencent_candle(row, prev_close=3912.52)
+        self.assertEqual(candle["date"], "2026-08-28")
+        self.assertEqual(candle["close"], 3956.57)
+        self.assertEqual(candle["change"], 44.05)
+        self.assertEqual(candle["pct"], 1.13)
+        self.assertIsNone(candle["amount"])  # 腾讯日 K 无成交额字段
+        self.assertEqual(candle["source"], "tencent")
+        # 首行无前收：pct/change 置 None（由抓取层丢弃，只用于校准）。
+        first = sources._parse_tencent_candle(row, prev_close=None)
+        self.assertIsNone(first["pct"])
+        self.assertIsNone(first["change"])
+        # 非法输入
+        self.assertIsNone(sources._parse_tencent_candle(None, 1.0))
+        self.assertIsNone(sources._parse_tencent_candle(["2026-08-28", "x", "y"], 1.0))
+
+    def test_fetch_klines_backup_fills_missing_indices(self):
+        # 主源（东方财富）失联/缺指数时，备用源（腾讯）自动补位；主源已有的指数不被覆盖。
+        em_candle = sources._parse_ashare_candle(self.CANDLE)
+        orig_em = sources._fetch_ashare_klines_eastmoney
+        orig_tx = sources._fetch_ashare_klines_tencent
+        tx_candle = sources._parse_tencent_candle(
+            ["2026-08-27", "3911.89", "3900.00", "3958.03", "3909.31", "1"], prev_close=3850.0)
+        try:
+            # 场景一：主源全挂 → 全部来自备用源。
+            sources._fetch_ashare_klines_eastmoney = lambda: {}
+            sources._fetch_ashare_klines_tencent = lambda: {
+                name: {"2026-08-27": dict(tx_candle)}
+                for name, _ in sources._ASHARE_TX_SYMBOLS
+            }
+            klines = sources._fetch_ashare_klines()
+            self.assertEqual(len(klines), 4)
+            self.assertEqual(klines["上证指数"]["2026-08-27"]["source"], "tencent")
+
+            # 场景二：主源只缺一个指数 → 备用源只补缺口，不覆盖主源数据。
+            sources._fetch_ashare_klines_eastmoney = lambda: {
+                "上证指数": {"2026-08-27": dict(em_candle)},
+                "深证成指": {"2026-08-27": dict(em_candle)},
+                "创业板指": {"2026-08-27": dict(em_candle)},
+            }
+            klines = sources._fetch_ashare_klines()
+            self.assertEqual(klines["上证指数"]["2026-08-27"]["source"], "eastmoney")
+            self.assertEqual(klines["科创50"]["2026-08-27"]["source"], "tencent")
+
+            # 场景三：主源齐全 → 不触发备用源。
+            def _boom():
+                raise AssertionError("主源齐全时不应调用备用源")
+            sources._fetch_ashare_klines_eastmoney = lambda: {
+                name: {"2026-08-27": dict(em_candle)} for name, _ in sources._ASHARE_INDICES
+            }
+            sources._fetch_ashare_klines_tencent = _boom
+            klines = sources._fetch_ashare_klines()
+            self.assertEqual(len(klines), 4)
+        finally:
+            sources._fetch_ashare_klines_eastmoney = orig_em
+            sources._fetch_ashare_klines_tencent = orig_tx
+
+    def test_build_market_from_tencent_backup(self):
+        # 完全由备用源组装：source=tencent，成交额（备用源无此字段）自动降级为 None。
+        orig_pools = sources._fetch_ashare_pools
+        sources._fetch_ashare_pools = lambda review_date: {
+            "limit_up": None, "limit_down": None, "hot_sectors": [], "cold_sectors": []}
+        try:
+            candle = sources._parse_tencent_candle(
+                ["2026-08-28", "3911.89", "3956.57", "3958.03", "3909.31", "1"],
+                prev_close=3912.52)
+            klines = {name: {"2026-08-28": dict(candle)}
+                      for name, _ in sources._ASHARE_TX_SYMBOLS}
+            market = sources._build_ashare_market(klines, date(2026, 8, 28))
+        finally:
+            sources._fetch_ashare_pools = orig_pools
+        self.assertEqual(market["source"], "tencent")
+        self.assertEqual(market["date"], "2026-08-28")
+        self.assertEqual(len(market["indices"]), 4)
+        self.assertIsNone(market["turnover"])
 
     def test_pick_review_date_is_latest_trading_day(self):
         # 今天 2026-08-29（周六）→ 最近交易日 = 2026-08-28（周五）。
@@ -335,6 +414,20 @@ class MarketFreshnessTest(unittest.TestCase):
             }
         return out
 
+    def _tx_klines(self, *dates):
+        """构造四大指数的备用源（腾讯）日 K：无成交额，涨跌由前收推算。"""
+        out = {}
+        for name in ("上证指数", "深证成指", "创业板指", "科创50"):
+            candles = {}
+            prev_close = 3900.0
+            for d in dates:
+                candle = sources._parse_tencent_candle(
+                    [d, "3900.0", "3950.0", "3960.0", "3890.0", "1"], prev_close)
+                candles[d] = candle
+                prev_close = candle["close"]
+            out[name] = candles
+        return out
+
     def test_fresh_market_passes_gate(self):
         # 接口正常：最新日 K = 今天，复盘日 = 2026-08-31 → 放行。
         klines = self._klines("2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31")
@@ -346,6 +439,16 @@ class MarketFreshnessTest(unittest.TestCase):
         self.assertEqual(fresh["latest_kline_date"], "2026-08-31")
         self.assertEqual(fresh["source"], "eastmoney")
         self.assertIn("最新", fresh["reason"])
+
+    def test_tencent_backup_market_passes_gate(self):
+        # 主源失联但备用源（腾讯）数据最新：source=tencent 同样放行。
+        klines = self._tx_klines("2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31")
+        market = sources._build_ashare_market(klines, self.TODAY)
+        fresh = sources.check_market_freshness(market, klines=klines, today=self.TODAY)
+        self.assertTrue(fresh["ok"], fresh["reason"])
+        self.assertEqual(fresh["source"], "tencent")
+        self.assertEqual(fresh["market_date"], self.EXPECTED)
+        self.assertIn("备用", fresh["reason"])
 
     def test_offline_snapshot_is_blocked(self):
         # 行情接口不可用 → 无法确认数据新旧 → 拦截（宁可不放行）。
