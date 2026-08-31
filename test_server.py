@@ -151,9 +151,12 @@ class MockedPushTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             record_file = os.path.join(tmp, "pushplus_record.json")
             mock = start_mock(mock_port, record_file)
+            # MARKET_FRESHNESS_FORCE=fresh：确定性地通过「大盘数据新鲜度」推送闸门
+            #（沙箱可能连不上东方财富，真实检查会因快照兜底被拦截）。
             srv = start_server(srv_port, {
                 "PUSHPLUS_TOKEN": "fake-token-123",
                 "PUSHPLUS_API_URL": f"http://127.0.0.1:{mock_port}/send",
+                "MARKET_FRESHNESS_FORCE": "fresh",
             })
             try:
                 status, raw = request(
@@ -190,6 +193,7 @@ class MockedPushTest(unittest.TestCase):
             srv = start_server(srv_port, {
                 "PUSHPLUS_TOKEN": "fake-token-123",
                 "PUSHPLUS_API_URL": f"http://127.0.0.1:{mock_port}/send",
+                "MARKET_FRESHNESS_FORCE": "fresh",
             })
             try:
                 status, raw = request(
@@ -202,6 +206,58 @@ class MockedPushTest(unittest.TestCase):
             finally:
                 srv.terminate(); srv.wait(timeout=5)
                 mock.terminate(); mock.wait(timeout=5)
+
+    def test_push_blocked_when_market_stale(self):
+        # 推送前闸门：大盘数据非最新 → 409 取消推送，假 PushPlus 收不到任何请求。
+        mock_port, srv_port = free_port(), free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            record_file = os.path.join(tmp, "pushplus_record.json")
+            mock = start_mock(mock_port, record_file)
+            srv = start_server(srv_port, {
+                "PUSHPLUS_TOKEN": "fake-token-123",
+                "PUSHPLUS_API_URL": f"http://127.0.0.1:{mock_port}/send",
+                "MARKET_FRESHNESS_FORCE": "stale",
+            })
+            try:
+                status, raw = request(
+                    f"http://127.0.0.1:{srv_port}", "POST", "/api/run", body={},
+                    headers={"Content-Type": "application/json"},
+                )
+                self.assertEqual(status, 409)
+                message = json.loads(raw)["message"]
+                self.assertIn("非最新", message)
+                # 透出的 freshness 便于排查（含复盘日/接口最新日K/应复盘交易日）。
+                freshness = json.loads(raw)["freshness"]
+                for key in ("ok", "reason", "market_date", "source",
+                            "latest_kline_date", "expected_date"):
+                    self.assertIn(key, freshness)
+                self.assertFalse(os.path.exists(record_file),
+                                 "大盘数据非最新时不应发出推送")
+            finally:
+                srv.terminate(); srv.wait(timeout=5)
+                mock.terminate(); mock.wait(timeout=5)
+
+
+class MarketEndpointTest(unittest.TestCase):
+    """GET /api/market：大盘数据新鲜度状态（推送闸门同一套检查结果）。"""
+
+    def test_market_endpoint_reports_freshness(self):
+        srv_port = free_port()
+        srv = start_server(srv_port, {"MARKET_FRESHNESS_FORCE": "fresh"})
+        try:
+            status, raw = request(f"http://127.0.0.1:{srv_port}", "GET", "/api/market")
+            self.assertEqual(status, 200)
+            data = json.loads(raw)
+            self.assertTrue(data["freshness"]["ok"])
+            # MARKET_FRESHNESS_FORCE 生效：reason 以强制结果开头。
+            self.assertIn("强制结果", data["freshness"]["reason"])
+            # 复盘概要：日期 / 来源 / 偏多偏空 / 四大指数（沙箱离线时为快照兜底）。
+            self.assertTrue(data["date"])
+            self.assertIn(data["source"], ("eastmoney", "snapshot"))
+            self.assertIn(data["bias"], ("偏多", "偏空", "中性"))
+            self.assertGreaterEqual(len(data["indices"]), 3)
+        finally:
+            srv.terminate(); srv.wait(timeout=5)
 
 
 def PathRead(path):

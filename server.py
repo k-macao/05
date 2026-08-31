@@ -25,6 +25,9 @@ SOURCES = sources.SOURCES
 # /api/brief 的结果缓存（抓取 18 个源较慢，5 分钟内不重复抓取）。
 _BRIEF_CACHE = {"at": 0.0, "data": None}
 _BRIEF_TTL = 300
+# /api/market 与推送闸门共用的大盘数据缓存（东方财富日 K + 新鲜度检查）。
+_MARKET_CACHE = {"at": 0.0, "payload": None}
+_MARKET_TTL = 300
 
 
 def get_brief():
@@ -36,6 +39,23 @@ def get_brief():
     _BRIEF_CACHE["at"] = now
     _BRIEF_CACHE["data"] = data
     return data
+
+
+def get_market():
+    """抓取并缓存大盘数据 + 新鲜度检查结果：{"market": ..., "freshness": ...}。"""
+    now = time.time()
+    if _MARKET_CACHE["payload"] is not None and now - _MARKET_CACHE["at"] < _MARKET_TTL:
+        return _MARKET_CACHE["payload"]
+    market, freshness = sources.collect_market_for_push()
+    payload = {"market": market, "freshness": freshness}
+    _MARKET_CACHE["at"] = now
+    _MARKET_CACHE["payload"] = payload
+    return payload
+
+
+def _skip_market_check() -> bool:
+    """SKIP_MARKET_CHECK=1/true/yes/on 时跳过大盘数据新鲜度检查（测试/应急）。"""
+    return os.environ.get("SKIP_MARKET_CHECK", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -58,6 +78,20 @@ class Handler(SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/sources":
             return self.send_json(HTTPStatus.OK, SOURCES)
+        if path == "/api/market":
+            # 大盘数据新鲜度状态：推送闸门「不是最新就不推」同一套检查结果，供页面展示。
+            try:
+                payload = get_market()
+            except Exception as error:
+                return self.send_json(HTTPStatus.OK, {"error": str(error)})
+            review = sources.analyze_ashare(payload["market"])
+            return self.send_json(HTTPStatus.OK, {
+                "freshness": payload["freshness"],
+                "date": review.get("date"),
+                "source": review.get("source"),
+                "bias": review.get("bias"),
+                "indices": review.get("indices"),
+            })
         if path == "/api/brief":
             try:
                 brief = get_brief()
@@ -77,12 +111,23 @@ class Handler(SimpleHTTPRequestHandler):
             })
         token = token.strip()  # 防止环境变量混入空白字符
 
+        # ── 推送前检查：大盘数据必须是最新，不是最新就不推（与 push_brief.py 同一套闸门）──
+        market_payload = get_market()
+        freshness = market_payload["freshness"]
+        if _skip_market_check():
+            print("警告：SKIP_MARKET_CHECK 已启用，跳过大盘数据新鲜度检查（仅限测试/应急）", flush=True)
+        elif not freshness.get("ok"):
+            return self.send_json(HTTPStatus.CONFLICT, {
+                "message": f"已取消推送：大盘数据非最新——{freshness.get('reason')}",
+                "freshness": freshness,
+            })
+
         # 真实抓取 18 个数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
         try:
             brief = get_brief()
         except Exception:
             brief = sources.collect_all()
-        content = sources.build_html(brief)
+        content = sources.build_html(brief, review=sources.analyze_ashare(market_payload["market"]))
 
         payload = {
             "token": token,

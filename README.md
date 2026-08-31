@@ -36,4 +36,11 @@ python3 -m http.server 8080
 PUSHPLUS_TOKEN=xxx python3 push_brief.py
 ```
 
+**推送前大盘数据新鲜度检查（不是最新就不推）**：推送前会先确认简报里的「AI 复盘 · 前日 A 股」数据为最新——①行情接口可用；②接口数据不滞后（最新日 K 不早于内置快照基线）；③复盘数据来自东方财富实时接口（非内置快照兜底）且复盘日等于最近一个可复盘交易日。任何一条不满足即放弃本次推送：`push_brief.py` 退出码 3（GitHub Actions 显示为失败，便于发现行情源异常），本地服务 `POST /api/run` 返回 409 并透出具体原因。页面「AI 复盘 · 前日 A 股」标题右侧的标签实时展示该检查结果（`GET /api/market`）。
+
+相关环境变量（测试/应急用，日常不建议设置）：
+
+- `SKIP_MARKET_CHECK=1`：跳过新鲜度检查，直接推送。
+- `MARKET_FRESHNESS_FORCE=fresh|stale`：强制检查结果，用于联调测试。
+
 数据仅供参考，不构成投资建议。
