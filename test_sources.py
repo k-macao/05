@@ -187,7 +187,7 @@ class BuildHtmlTest(unittest.TestCase):
 
 
 class AshareReviewTest(unittest.TestCase):
-    """前日 A 股六维度复盘：内容策略、数据解析、复盘日选取、离线兜底与 HTML 渲染。"""
+    """最新 A 股六维度复盘：内容策略、数据解析、复盘日选取、离线兜底与 HTML 渲染。"""
 
     CANDLE = ("2026-08-27,3911.89,3956.57,3958.03,3909.31,516777549,"
               "1010226573954.60,1.25,1.13,44.05,1.07")
@@ -201,25 +201,33 @@ class AshareReviewTest(unittest.TestCase):
         self.assertEqual(candle["amount"], 1010226573954.60)
         self.assertIsNone(sources._parse_ashare_candle(""))
 
-    def test_pick_review_date_is_day_before_yesterday(self):
-        # 今天 2026-08-29（周六）→「前天」复盘日 = 2026-08-27（最近交易日）。
+    def test_pick_review_date_is_latest_trading_day(self):
+        # 今天 2026-08-29（周六）→ 最近交易日 = 2026-08-28（周五）。
         klines = {
             "上证指数": {"2026-08-27": {}, "2026-08-28": {}},
             "深证成指": {"2026-08-27": {}},
         }
         from datetime import date
-        self.assertEqual(sources._pick_review_date(klines, date(2026, 8, 29)), "2026-08-27")
-        # 周一 2026-08-31：前天是周六无交易，回溯到 2026-08-28（周五）。
+        self.assertEqual(sources._pick_review_date(klines, date(2026, 8, 29)), "2026-08-28")
+        # 周一 2026-08-31（接口已有当天日 K）：直接复盘 2026-08-31。
+        klines_mon = {
+            "上证指数": {"2026-08-28": {}, "2026-08-31": {}},
+            "深证成指": {"2026-08-28": {}, "2026-08-31": {}},
+        }
+        self.assertEqual(sources._pick_review_date(klines_mon, date(2026, 8, 31)), "2026-08-31")
+        # 周一 2026-08-31（盘前接口仅到周五）：自动回溯到 2026-08-28。
         self.assertEqual(sources._pick_review_date(klines, date(2026, 8, 31)), "2026-08-28")
 
     def test_get_fallback_review_date(self):
         from datetime import date
-        # 周日 2026-08-30 → 前天周五 2026-08-28
+        # 周日 2026-08-30 → 最近交易日周五 2026-08-28
         self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 30)), "2026-08-28")
-        # 周一 2026-08-31 → 周六无交易，向前回溯到周五 2026-08-28
-        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 31)), "2026-08-28")
-        # 周六 2026-08-29 → 前天周四 2026-08-27
-        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 29)), "2026-08-27")
+        # 周一 2026-08-31 → 当天 2026-08-31
+        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 31)), "2026-08-31")
+        # 周六 2026-08-29 → 周五 2026-08-28
+        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 29)), "2026-08-28")
+        # 周五 2026-08-28 → 当天 2026-08-28
+        self.assertEqual(sources._get_fallback_review_date(date(2026, 8, 28)), "2026-08-28")
 
     def test_analyze_ashare_has_six_dimensions(self):
         review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
@@ -277,7 +285,7 @@ class AshareReviewTest(unittest.TestCase):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
         review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
         out = sources.build_html(brief, review=review)
-        self.assertIn("AI 复盘 · 前日 A 股", out)
+        self.assertIn("AI 复盘 · 最新 A 股", out)
         self.assertIn(sources._ASHARE_SNAPSHOT["date"], out)
         for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
                       "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"):
@@ -298,11 +306,11 @@ class MarketFreshnessTest(unittest.TestCase):
     """推送前大盘数据新鲜度检查：不是最新就不推。
 
     行情接口全部走本地注入的日 K，杜绝测试依赖外网。
-    场景基准：today = 2026-08-31（周一），「前天」= 周六 → 应复盘交易日 = 2026-08-28（周五）。
+    场景基准：today = 2026-08-31（周一），最新日 K = 2026-08-31。
     """
 
     TODAY = date(2026, 8, 31)
-    EXPECTED = "2026-08-28"
+    EXPECTED = "2026-08-31"
 
     def setUp(self):
         self._orig_klines = sources._fetch_ashare_klines
@@ -328,7 +336,7 @@ class MarketFreshnessTest(unittest.TestCase):
         return out
 
     def test_fresh_market_passes_gate(self):
-        # 接口正常：最新日 K = 今天（盘中），复盘日 = 周五 2026-08-28 → 放行。
+        # 接口正常：最新日 K = 今天，复盘日 = 2026-08-31 → 放行。
         klines = self._klines("2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31")
         market = sources._build_ashare_market(klines, self.TODAY)
         fresh = sources.check_market_freshness(market, klines=klines, today=self.TODAY)
@@ -357,7 +365,7 @@ class MarketFreshnessTest(unittest.TestCase):
     def test_stale_review_date_is_blocked(self):
         # 数据来源是实时接口，但复盘日落后于应复盘交易日 → 拦截。
         klines = self._klines("2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31")
-        market = {"date": "2026-08-26", "source": "eastmoney"}
+        market = {"date": "2026-08-28", "source": "eastmoney"}
         fresh = sources.check_market_freshness(market, klines=klines, today=self.TODAY)
         self.assertFalse(fresh["ok"])
         self.assertIn("不一致", fresh["reason"])
