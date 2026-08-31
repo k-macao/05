@@ -19,7 +19,7 @@
     collect_all()      : 依次抓取全部 18 个源，返回 {name: [item, ...]}
     collect_one(name)  : 抓取单个源，返回 [item, ...]
     analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
-    get_ashare_market(): 采集「前天」A 股行情（东方财富接口 → 内置快照兜底）
+    get_ashare_market(): 采集「前天」A 股行情（东方财富主接口 → 腾讯证券备用接口 → 内置快照兜底）
     analyze_ashare()   : 最新 A 股六维度复盘引擎（三大指数/成交额/涨跌家数/板块/资金/后市）
     check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
     collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
@@ -735,8 +735,9 @@ def _compose_flow(sectors_up: list, sectors_down: list, top_themes: list) -> str
 # 「AI 复盘 · 最新 A 股」板块：按六维度内容策略，用 AI 视角复盘最新的 A 股行情——
 #   ① 三大指数涨跌　② 两市成交额　③ 涨跌家数与涨跌停　④ 领涨/领跌板块
 #   ⑤ 主力资金与北向资金　⑥ 后市观点与策略
-# 数据链路与 18 个新闻源一致：东方财富公开行情接口（指数日 K、涨停/跌停池均支持按日
-# 回溯）优先抓取 → 内置真实快照（2026-08-27 收盘数据）兜底，任何环境都能稳定出内容。
+# 数据链路与 18 个新闻源一致：东方财富公开行情接口（主源，指数日 K、涨停/跌停池均支持
+# 按日回溯）优先抓取 → 腾讯证券行情接口（备用源，指数日 K）补位 → 内置真实快照
+# （2026-08-27 收盘数据）兜底，任何环境都能稳定出内容。
 # 说明：北向资金实时数据自 2024 年 8 月起已停止披露，复盘口径改为主力资金 + 两融。
 
 _ASHARE_UT = "fa5fd1943c7b386f172d6893dbfba10b"
@@ -750,6 +751,22 @@ _ASHARE_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 _ASHARE_ZT_URL = "https://push2ex.eastmoney.com/getTopicZTPool"
 _ASHARE_DT_URL = "https://push2ex.eastmoney.com/getTopicDTPool"
 _ASHARE_TIMEOUT = 6
+
+# 备用行情源：腾讯证券公开日 K 接口（主源东方财富失联/缺指数时自动补位）。
+# 返回字段仅 日期/开/收/高/低/量，无成交额；涨跌额与涨跌幅由相邻两日收盘价推算。
+_ASHARE_TX_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+_ASHARE_TX_SYMBOLS = [
+    ("上证指数", "sh000001"),
+    ("深证成指", "sz399001"),
+    ("创业板指", "sz399006"),
+    ("科创50", "sh000688"),
+]
+
+# 新鲜度闸门认可的实时行情来源（内置快照 snapshot 不在其列）。
+_ASHARE_LIVE_SOURCES = {
+    "eastmoney": "东方财富实时行情接口",
+    "tencent": "腾讯证券备用行情接口",
+}
 
 # 内置真实快照：2026-08-27（周四）A 股收盘行情。
 # 数据来源：东方财富日 K/涨停池接口实测，与新浪财经、每日经济新闻、财联社当日收评交叉核对一致
@@ -813,9 +830,39 @@ def _parse_ashare_candle(line: str) -> dict | None:
             "amount": float(parts[6]),  # 单位：元
             "pct": float(parts[8]),
             "change": float(parts[9]),
+            "source": "eastmoney",
         }
     except ValueError:
         return None
+
+
+def _parse_tencent_candle(row, prev_close: float | None) -> dict | None:
+    """腾讯证券日 K 一行 → 字典。行格式：[date, open, close, high, low, volume, ...]。
+
+    接口不含成交额与涨跌幅：amount 置 None（两市成交额降级为不展示），
+    涨跌额/涨跌幅由前一日收盘价推算（首行无前收，由调用方丢弃）。
+    """
+    if not isinstance(row, (list, tuple)) or len(row) < 6:
+        return None
+    try:
+        close = float(row[2])
+    except (TypeError, ValueError):
+        return None
+    date = str(row[0])
+    if prev_close is None or prev_close <= 0:
+        change = pct = None
+    else:
+        change = round(close - prev_close, 2)
+        pct = round(change / prev_close * 100, 2)
+    return {
+        "date": date,
+        "close": close,
+        "amount": None,  # 腾讯日 K 无成交额字段
+        "pct": pct,
+        "change": change,
+        "source": "tencent",
+    }
+
 
 
 def _fetch_json(url: str, params: dict) -> dict:
@@ -825,8 +872,8 @@ def _fetch_json(url: str, params: dict) -> dict:
         return json.loads(response.read().decode("utf-8", "replace"))
 
 
-def _fetch_ashare_klines() -> dict:
-    """四个指数最近 16 根日 K（含成交额）。返回 {指数名: {date: candle}}，个别失败跳过。"""
+def _fetch_ashare_klines_eastmoney() -> dict:
+    """主源（东方财富）：四个指数最近 16 根日 K（含成交额）。返回 {指数名: {date: candle}}，个别失败跳过。"""
     result = {}
     for name, secid in _ASHARE_INDICES:
         try:
@@ -847,6 +894,47 @@ def _fetch_ashare_klines() -> dict:
         except Exception:
             continue
     return result
+
+
+def _fetch_ashare_klines_tencent() -> dict:
+    """备用源（腾讯证券）：四个指数最近 16 根日 K。返回 {指数名: {date: candle}}，个别失败跳过。
+
+    多抓一根（17）用于推算首日涨跌幅后丢弃，保证返回的 16 根都有 pct/change。
+    """
+    result = {}
+    for name, symbol in _ASHARE_TX_SYMBOLS:
+        try:
+            payload = _fetch_json(_ASHARE_TX_KLINE_URL, {"param": f"{symbol},day,,,17,qfq"})
+            data = ((payload.get("data") or {}).get(symbol)) or {}
+            rows = data.get("day") or data.get("qfqday") or []
+            candles = {}
+            prev_close = None
+            for row in rows:
+                candle = _parse_tencent_candle(row, prev_close)
+                if not candle:
+                    continue
+                prev_close = candle["close"]
+                if candle["pct"] is None:  # 首行无前收，仅用于校准，不入结果
+                    continue
+                candles[candle["date"]] = candle
+            if candles:
+                result[name] = candles
+        except Exception:
+            continue
+    return result
+
+
+def _fetch_ashare_klines() -> dict:
+    """抓取四大指数日 K：东方财富（主）优先，缺指数/失联时用腾讯证券（备）补位。"""
+    klines = _fetch_ashare_klines_eastmoney()
+    if len(klines) < len(_ASHARE_INDICES):
+        try:
+            backup = _fetch_ashare_klines_tencent()
+        except Exception:
+            backup = {}
+        for name, candles in backup.items():
+            klines.setdefault(name, candles)
+    return klines
 
 
 def _pick_review_date(klines: dict, today) -> str | None:
@@ -906,7 +994,7 @@ def _fetch_ashare_pools(review_date: str) -> dict:
 
 
 def get_ashare_market() -> dict:
-    """采集最新 A 股行情：东方财富接口优先，任何失败回退内置真实快照。"""
+    """采集最新 A 股行情：东方财富接口优先 → 腾讯证券备用接口补位，全部失败回退内置真实快照。"""
     return _build_ashare_market(_fetch_ashare_klines(), _ashare_today())
 
 
@@ -925,9 +1013,12 @@ def _build_ashare_market(klines: dict, today) -> dict:
             return snapshot
 
         indices = []
+        market_source = None
         for name, _secid in _ASHARE_INDICES:
             candle = (klines.get(name) or {}).get(review_date)
             if candle:
+                if market_source is None:
+                    market_source = candle.get("source") or "eastmoney"
                 indices.append({
                     "name": name,
                     "close": candle["close"],
@@ -940,10 +1031,11 @@ def _build_ashare_market(klines: dict, today) -> dict:
             return snapshot
 
         # 两市成交额：沪市（上证）+ 深市（深成）日 K 的成交额（单位：元 → 亿元）。
+        # 备用源（腾讯）无成交额字段（amount=None）时该维度自动降级为不展示。
         sh = (klines.get("上证指数") or {}).get(review_date)
         sz = (klines.get("深证成指") or {}).get(review_date)
         turnover = None
-        if sh and sz:
+        if sh and sz and sh.get("amount") is not None and sz.get("amount") is not None:
             amount = (sh["amount"] + sz["amount"]) / 1e8
             prev_date = next(
                 (d for d in sorted((klines.get("上证指数") or {}), reverse=True) if d < review_date),
@@ -953,7 +1045,7 @@ def _build_ashare_market(klines: dict, today) -> dict:
             if prev_date:
                 psh = (klines.get("上证指数") or {}).get(prev_date)
                 psz = (klines.get("深证成指") or {}).get(prev_date)
-                if psh and psz:
+                if psh and psz and psh.get("amount") is not None and psz.get("amount") is not None:
                     delta = round(amount - (psh["amount"] + psz["amount"]) / 1e8)
             turnover = {"amount": round(amount), "delta": delta, "unit": "亿"}
 
@@ -962,7 +1054,7 @@ def _build_ashare_market(klines: dict, today) -> dict:
         laggards = [{"name": s, "note": "跌停个股所在"} for s in pools["cold_sectors"]]
         return {
             "date": review_date,
-            "source": "eastmoney",
+            "source": market_source or "eastmoney",
             "indices": indices,
             "turnover": turnover,
             "breadth": {
@@ -988,11 +1080,12 @@ def _build_ashare_market(klines: dict, today) -> dict:
 # ---------------------------------------------------------------- 大盘数据新鲜度闸门
 # 推送前检查：简报里的「大盘数据」必须是最新的，不是最新就不推。
 # 判定标准（三条全过才算「最新」）：
-#   ① 行情接口可用——拿不到日 K 就无法确认数据新旧，宁可不放行；
+#   ① 行情接口可用——主源（东方财富）与备用源（腾讯证券）都拿不到日 K 就无法确认
+#      数据新旧，宁可不放行；
 #   ② 接口数据不滞后——最新日 K 不得早于内置快照基线日期（日期只会向前走，
 #      一旦倒退说明行情源异常）；
-#   ③ 大盘复盘数据来自实时接口（非内置快照兜底），且复盘日 = 按最新口径
-#      应复盘的最近交易日（接口数据自动覆盖周末/长假回溯）。
+#   ③ 大盘复盘数据来自实时接口（东方财富或腾讯证券备用源，非内置快照兜底），
+#      且复盘日 = 按最新口径应复盘的最近交易日（接口数据自动覆盖周末/长假回溯）。
 
 def check_market_freshness(market: dict | None = None,
                            klines: dict | None = None,
@@ -1002,7 +1095,7 @@ def check_market_freshness(market: dict | None = None,
         ok                是否最新（推送闸门以此为据）
         reason            人类可读结论（含具体日期，可直接进日志/推送提示）
         market_date       本次大盘复盘数据的日期
-        source            数据来源（eastmoney 实时接口 / snapshot 内置快照）
+        source            数据来源（eastmoney 主接口 / tencent 备用接口 / snapshot 内置快照）
         latest_kline_date 行情接口最新一根日 K 的日期（接口视角的“今天”）
         expected_date     按最新口径应复盘的最近交易日
         checked_at        检查时间（北京时间）
@@ -1025,7 +1118,8 @@ def check_market_freshness(market: dict | None = None,
     }
 
     if not dates:
-        info["reason"] = ("行情接口不可用，无法确认大盘数据为最新"
+        info["reason"] = ("行情接口不可用（主源东方财富与备用源腾讯证券均未返回日 K），"
+                          "无法确认大盘数据为最新"
                           f"（当前兜底：内置快照，复盘日 {info['market_date'] or '未知'}）")
         return info
 
@@ -1037,7 +1131,7 @@ def check_market_freshness(market: dict | None = None,
         info["reason"] = (f"行情接口数据滞后：最新日 K {dates[0]} 早于内置快照基线 {floor}"
                           "，判定非最新")
         return info
-    if market.get("source") != "eastmoney":
+    if market.get("source") not in _ASHARE_LIVE_SOURCES:
         info["reason"] = (f"大盘数据回退内置快照（冻结于 {floor}），非实时接口数据，"
                           f"无法确认为最新（应复盘交易日 {expected or '未知'}）")
         return info
@@ -1047,7 +1141,8 @@ def check_market_freshness(market: dict | None = None,
         return info
 
     info["ok"] = True
-    info["reason"] = f"大盘数据为最新：复盘交易日 {expected}（数据来源：东方财富实时行情接口）"
+    source_label = _ASHARE_LIVE_SOURCES.get(market.get("source"), "实时行情接口")
+    info["reason"] = f"大盘数据为最新：复盘交易日 {expected}（数据来源：{source_label}）"
     return info
 
 
@@ -1257,7 +1352,7 @@ def analyze_ashare(market: dict | None = None) -> dict:
 
     返回：
         date       复盘交易日（如 2026-08-27）
-        source     数据来源（eastmoney 实时接口 / snapshot 内置快照）
+        source     数据来源（eastmoney 主接口 / tencent 备用接口 / snapshot 内置快照）
         headline   AI 一句话复盘
         bias       偏多 / 偏空 / 中性
         indices    四大指数明细 [{name, close, pct, change}]
@@ -1461,7 +1556,10 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         + "</table>"
     )
 
-    source_label = "东方财富行情接口" if review.get("source") == "eastmoney" else "内置真实快照"
+    source_label = {
+        "eastmoney": "东方财富行情接口",
+        "tencent": "腾讯证券行情接口（备用）",
+    }.get(review.get("source"), "内置真实快照")
     ashare_card = (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
