@@ -20,7 +20,7 @@
     collect_one(name)  : 抓取单个源，返回 [item, ...]
     analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
     get_ashare_market(): 采集「前天」A 股行情（东方财富接口 → 内置快照兜底）
-    analyze_ashare()   : 前日 A 股六维度复盘引擎（三大指数/成交额/涨跌家数/板块/资金/后市）
+    analyze_ashare()   : 最新 A 股六维度复盘引擎（三大指数/成交额/涨跌家数/板块/资金/后市）
     check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
     collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
     build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报
@@ -731,8 +731,8 @@ def _compose_flow(sectors_up: list, sectors_down: list, top_themes: list) -> str
     return "样本有限，资金流向暂不明朗，建议等待更多信号确认。"
 
 
-# ---------------------------------------------------------------- 前日 A 股复盘引擎
-# 「AI 复盘 · 前日 A 股」板块：按六维度内容策略，用 AI 视角复盘“前天”的 A 股行情——
+# ---------------------------------------------------------------- 最新 A 股复盘引擎
+# 「AI 复盘 · 最新 A 股」板块：按六维度内容策略，用 AI 视角复盘最新的 A 股行情——
 #   ① 三大指数涨跌　② 两市成交额　③ 涨跌家数与涨跌停　④ 领涨/领跌板块
 #   ⑤ 主力资金与北向资金　⑥ 后市观点与策略
 # 数据链路与 18 个新闻源一致：东方财富公开行情接口（指数日 K、涨停/跌停池均支持按日
@@ -850,8 +850,8 @@ def _fetch_ashare_klines() -> dict:
 
 
 def _pick_review_date(klines: dict, today) -> str | None:
-    """「前天」的复盘日：≤ 今天−2 天 的最近一个交易日（周末/长假自动向前回溯）。"""
-    target = str(today - timedelta(days=2))
+    """最新 A 股复盘日：≤ 今天的最近一个交易日（最新日 K，周末/长假自动向前回溯）。"""
+    target = str(today)
     dates = sorted({d for candles in klines.values() for d in candles}, reverse=True)
     for date in dates:
         if date <= target:
@@ -860,10 +860,10 @@ def _pick_review_date(klines: dict, today) -> str | None:
 
 
 def _get_fallback_review_date(today=None) -> str:
-    """基于『今天』推导的前日复盘交易日（≤ 今天-2 天的最近交易日，离线/兜底时使用）。"""
+    """基于『今天』推导的最新 A 股复盘交易日（≤ 今天的最近交易日，离线/兜底时使用）。"""
     if today is None:
         today = _ashare_today()
-    target = today - timedelta(days=2)
+    target = today
     while target.weekday() >= 5:
         target -= timedelta(days=1)
     return str(target)
@@ -906,12 +906,12 @@ def _fetch_ashare_pools(review_date: str) -> dict:
 
 
 def get_ashare_market() -> dict:
-    """采集「前天」A 股行情：东方财富接口优先，任何失败回退内置真实快照。"""
+    """采集最新 A 股行情：东方财富接口优先，任何失败回退内置真实快照。"""
     return _build_ashare_market(_fetch_ashare_klines(), _ashare_today())
 
 
 def _build_ashare_market(klines: dict, today) -> dict:
-    """由已抓取的日 K 组装「前天」复盘行情（东方财富 → 内置快照兜底）。
+    """由已抓取的日 K 组装最新复盘行情（东方财富 → 内置快照兜底）。
 
     与网络解耦：日 K 由调用方传入（`get_ashare_market()` 抓一次网络，
     `collect_market_for_push()` 复用同一次结果做新鲜度检查），便于测试注入。
@@ -991,7 +991,7 @@ def _build_ashare_market(klines: dict, today) -> dict:
 #   ① 行情接口可用——拿不到日 K 就无法确认数据新旧，宁可不放行；
 #   ② 接口数据不滞后——最新日 K 不得早于内置快照基线日期（日期只会向前走，
 #      一旦倒退说明行情源异常）；
-#   ③ 大盘复盘数据来自实时接口（非内置快照兜底），且复盘日 = 按「前天」口径
+#   ③ 大盘复盘数据来自实时接口（非内置快照兜底），且复盘日 = 按最新口径
 #      应复盘的最近交易日（接口数据自动覆盖周末/长假回溯）。
 
 def check_market_freshness(market: dict | None = None,
@@ -1004,7 +1004,7 @@ def check_market_freshness(market: dict | None = None,
         market_date       本次大盘复盘数据的日期
         source            数据来源（eastmoney 实时接口 / snapshot 内置快照）
         latest_kline_date 行情接口最新一根日 K 的日期（接口视角的“今天”）
-        expected_date     按「前天」口径应复盘的最近交易日
+        expected_date     按最新口径应复盘的最近交易日
         checked_at        检查时间（北京时间）
     """
     today = today or _ashare_today()
@@ -1253,7 +1253,7 @@ def _compose_ashare_outlook(market: dict, bias: str) -> str:
 
 
 def analyze_ashare(market: dict | None = None) -> dict:
-    """前日 A 股六维度 AI 复盘。``market`` 缺省时先尝试实时采集，失败回退内置快照。
+    """最新 A 股六维度 AI 复盘。``market`` 缺省时先尝试实时采集，失败回退内置快照。
 
     返回：
         date       复盘交易日（如 2026-08-27）
@@ -1399,7 +1399,7 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         + "</table>"
     )
 
-    # 前日 A 股复盘（六维度内容策略）：标题条 + AI 一句话 + 指数条 + 六个观点行 + 数据来源。
+    # 最新 A 股复盘（六维度内容策略）：标题条 + AI 一句话 + 指数条 + 六个观点行 + 数据来源。
     if review is None:
         review = analyze_ashare()
 
@@ -1467,7 +1467,7 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
         f'<tr><td style="padding:11px 12px 12px;">'
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        f'<td style="color:{neon_green};background:{black};padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 复盘 · 前日 A 股</td>'
+        f'<td style="color:{neon_green};background:{black};padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 复盘 · 最新 A 股</td>'
         f'<td align="right" valign="middle" style="white-space:nowrap;">{bias_pill} <span style="color:{muted};font-size:10px;{font}">{_esc(review.get("date") or "")}</span></td>'
         f'</tr></table>'
         f'<div style="margin:8px 0 0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{_hl_ashare(review.get("headline") or "")}</div>'
@@ -1503,7 +1503,7 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         f'{points_html}'
         f'</td></tr></table>'
 
-        # 前日 A 股六维度复盘：紧跟开篇 AI 总结，同属「开头 AI 部分」。
+        # 最新 A 股六维度复盘：紧跟开篇 AI 总结，同属「开头 AI 部分」。
         + ashare_card
 
         # Compact report counters.
