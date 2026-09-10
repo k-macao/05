@@ -169,6 +169,20 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertIn("金十数据", out)
         self.assertIn("不构成投资建议", out)
 
+    def test_method_note_closes_push_report(self):
+        brief = {name: sources._demo_items(name)[:1] for name in sources.SOURCES}
+        out = sources.build_html(brief, review=sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT))
+        intro = (
+            "全网境内外为你寻找蛛丝马迹-提供全景视野分析。由多模型协同推理决策，"
+            "底层所使用的大语言模型（LLM）多模式背后结合使用了多种不同的先进模型，"
+            "包括但不限于 Claude、ChatGPT、Gemini、Grok、Qwen 以及 Kimi。"
+            "根据不同的资产管理任务需求，更好地发挥各个模型的优势来提供数据支持！[加油]"
+        )
+        self.assertEqual(out.count(intro), 1)
+        self.assertGreater(out.find(intro), out.rfind("金十数据"))
+        self.assertGreater(out.find("数据仅供参考，不构成投资建议"), out.find(intro))
+        self.assertGreater(out.find("作者：章鱼 ai"), out.find(intro))
+
     def test_build_html_renders_four_viewpoints(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
         out = sources.build_html(brief)
