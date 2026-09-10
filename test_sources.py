@@ -179,7 +179,8 @@ class BuildHtmlTest(unittest.TestCase):
             "根据不同的资产管理任务需求，更好地发挥各个模型的优势来提供数据支持！[加油]"
         )
         self.assertEqual(out.count(intro), 1)
-        self.assertGreater(out.find(intro), out.rfind("数据仅供参考，不构成投资建议"))
+        self.assertGreater(out.find(intro), out.rfind("金十数据"))
+        self.assertGreater(out.find("数据仅供参考，不构成投资建议"), out.find(intro))
         self.assertGreater(out.find("作者：章鱼 ai"), out.find(intro))
 
     def test_build_html_renders_four_viewpoints(self):
