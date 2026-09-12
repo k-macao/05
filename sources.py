@@ -1442,16 +1442,35 @@ def _trunc(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def build_html(brief: dict, now: datetime | None = None, review: dict | None = None, max_items_per_source: int | None = 3) -> str:
+def _is_pushplus_member() -> bool:
+    """检查环境变量 PUSHPLUS_MEMBER 是否启用（1/true/yes/on）。"""
+    return os.environ.get("PUSHPLUS_MEMBER", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def build_html(
+    brief: dict,
+    now: datetime | None = None,
+    review: dict | None = None,
+    max_items_per_source: int | None = None,
+    max_length: int | None = None,
+) -> str:
     """生成适合微信阅读的竖版长图文简报（内联样式，兼容 PushPlus HTML 模板）。
 
     视觉基调：电子杂志 × 电子墨水。页面以浅灰纸张为底，正文使用黑色，
     只用荧光绿和黑色做标题、标记与重点强调，避免邮件客户端中的复杂布局。
     ``now`` 保留在接口中以兼容现有调用，但报告标题不展示推送时间。
     ``review`` 为「前日 A 股复盘」结果；缺省时自动调用 analyze_ashare()（实时采集 → 快照兜底）。
-    ``max_items_per_source`` 控制每个数据源卡片展示的最大条数（默认 3 条），
-    兼顾全源精选覆盖与 PushPlus 的 2 万字单条消息限制。
+    ``max_items_per_source`` 控制每个数据源卡片展示的最大条数。未指定时：
+      - 普通/实名用户（默认）：精选展示前 3 条，单条推送限制在 2 万字以内；
+      - PushPlus 会员（PUSHPLUS_MEMBER=1）：展示全量快讯（支持 10 万字推送）。
+    ``max_length`` 字符上限。未指定时，普通用户为 19,500 字符，会员为 98,000 字符。
     """
+    is_member = _is_pushplus_member()
+    if max_items_per_source is None and not is_member:
+        max_items_per_source = 3
+    if max_length is None:
+        max_length = 98000 if is_member else 19500
+
     # E-ink editorial palette: paper first, ink second, green only for emphasis.
     neon_green = "#b7ff00"
     ink = "#111311"
@@ -1672,10 +1691,10 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         )
 
     out = _render_full(max_items_per_source)
-    if len(out) > 19500:
-        for limit in (3, 2, 1):
+    if len(out) > max_length:
+        for limit in (5, 4, 3, 2, 1):
             out = _render_full(limit)
-            if len(out) <= 19500:
+            if len(out) <= max_length:
                 break
 
     return out

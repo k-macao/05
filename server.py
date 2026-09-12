@@ -152,7 +152,7 @@ class Handler(SimpleHTTPRequestHandler):
                 data_detail = result.get("data")
                 message = f"PushPlus 拒绝（code={code}）：{result.get('msg', '')}"
                 if data_detail and any(kw in str(data_detail) for kw in ("过大", "超长", "限制", "大小")):
-                    hint = f"推送内容超过 PushPlus 限制（{data_detail}），请控制推送 HTML 长度在 2 万字以内"
+                    hint = f"推送内容超过 PushPlus 限制（{data_detail}）。普通用户限制 2 万字，若已是会员请配置 PUSHPLUS_MEMBER=1 解锁 10 万字推送"
                 else:
                     hint = PUSHPLUS_ERROR_HINTS.get(code)
                     if hint and data_detail and str(data_detail) not in hint:

@@ -328,6 +328,18 @@ class BuildHtmlTest(unittest.TestCase):
         out = sources.build_html(huge_brief)
         self.assertLessEqual(len(out), 19500)
 
+    def test_build_html_member_mode_unlocks_full_items(self):
+        # 当 PUSHPLUS_MEMBER=1 启用时，解封 10 万字上限并展示全量快讯
+        os.environ["PUSHPLUS_MEMBER"] = "1"
+        try:
+            brief = {name: sources._demo_items(name) for name in sources.SOURCES}
+            out = sources.build_html(brief)
+            self.assertTrue(sources._is_pushplus_member())
+            for name in sources.SOURCES:
+                self.assertIn(sources._esc(name), out)
+        finally:
+            os.environ.pop("PUSHPLUS_MEMBER", None)
+
 
 class AshareReviewTest(unittest.TestCase):
     """最新 A 股六维度复盘：内容策略、数据解析、复盘日选取、离线兜底与 HTML 渲染。"""
