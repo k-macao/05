@@ -518,7 +518,7 @@ def collect_all(limit: int = LIMIT) -> dict:
 
 
 # ---------------------------------------------------------------- 开篇 AI 总结引擎
-# 换新方式：不再硬编码「AI 今天给你去噪音，留干货」开篇总结，改为对真实抓取到的标题做
+# 换新方式：不再硬编码「AI 每日总结」开篇总结，改为对真实抓取到的标题做
 # 「主题热度 + 多空情绪」统计，每次推送都随数据动态更新，零外部依赖、可离线运行。
 # 如需接入在线大模型，只需覆盖 analyze_brief() 的返回值（字段保持一致即可）。
 
@@ -552,7 +552,7 @@ def analyze_brief(brief: dict) -> dict:
     """对采集结果做本地「AI 总结」：主题热度 + 多空博弈概率 + 板块风向 + 资金流向。
 
     返回：
-        headline      「AI 今天给你去噪音，留干货」正文（纯文本，引用热度最高的一两个板块）
+        headline      「AI 每日总结」正文（纯文本，引用热度最高的一两个板块）
         bias          偏多 / 偏空 / 中性
         bull          多方概率（百分比整数）
         bear          空方概率（百分比整数）
@@ -662,7 +662,7 @@ def analyze_brief(brief: dict) -> dict:
 
 
 def _compose_headline(bias: str, top_themes: list) -> str:
-    """依据多空方向与热度最高的板块，拼出自然的「AI 今天给你去噪音，留干货」总结句。"""
+    """依据多空方向与热度最高的板块，拼出自然的「AI 每日总结」总结句。"""
     t1 = top_themes[0][0] if top_themes else None
     t2 = top_themes[1][0] if len(top_themes) > 1 else None
 
@@ -732,7 +732,7 @@ def _compose_flow(sectors_up: list, sectors_down: list, top_themes: list) -> str
 
 
 # ---------------------------------------------------------------- 最新 A 股复盘引擎
-# 「AI 复盘 · 最新 A 股」板块：按六维度内容策略，用 AI 视角复盘最新的 A 股行情——
+# 「AI 研判」板块：按六维度内容策略，用 AI 视角复盘最新的 A 股行情——
 #   ① 三大指数涨跌　② 两市成交额　③ 涨跌家数与涨跌停　④ 领涨/领跌板块
 #   ⑤ 主力资金与北向资金　⑥ 后市观点与策略
 # 数据链路与 18 个新闻源一致：东方财富公开行情接口（主源，指数日 K、涨停/跌停池均支持
@@ -1565,7 +1565,7 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
         f'<tr><td style="padding:11px 12px 12px;">'
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        f'<td style="color:{neon_green};background:{black};padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 复盘 · 最新 A 股</td>'
+        f'<td style="color:{neon_green};background:{black};padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 研判</td>'
         f'<td align="right" valign="middle" style="white-space:nowrap;">{bias_pill} <span style="color:{muted};font-size:10px;{font}">{_esc(review.get("date") or "")}</span></td>'
         f'</tr></table>'
         f'<div style="margin:8px 0 0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{_hl_ashare(review.get("headline") or "")}</div>'
@@ -1596,7 +1596,7 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         # One-line insight plus the four AI viewpoints, green-on-black highlights.
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
         f'<tr><td style="padding:11px 12px 12px;">'
-        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 今天给你去噪音，留干货</div>'
+        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 每日总结</div>'
         f'<div style="margin:0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{headline}</div>'
         f'{points_html}'
         f'</td></tr></table>'
@@ -1612,11 +1612,11 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;{font}">18<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">境内外视野</span></td>'
         f'</tr></table>'
 
-        # Method note comes before the source stream; the author remains the very last line.
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border-left:4px solid {black};">'
-        f'<tr><td style="padding:10px 12px;color:{ink};font-size:12px;line-height:1.7;{font}"><span style="color:{neon_green};background:{black};padding:2px 4px;font-size:10px;">调研方法</span><br>{_esc(intro)}</td></tr></table>'
-
         + "".join(source_cards)
+
+        # Method note now sits at the very end of the page, after all source streams.
+        + f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:10px 0 0;background:{paper_lift};border-left:4px solid {black};">'
+        f'<tr><td style="padding:10px 12px;color:{ink};font-size:12px;line-height:1.7;{font}"><span style="color:{neon_green};background:{black};padding:2px 4px;font-size:10px;">调研方法</span><br>{_esc(intro)}</td></tr></table>'
         + f'<div style="margin:10px 0 0;color:{muted};font-size:10px;line-height:1.5;text-align:center;{font}">数据仅供参考，不构成投资建议</div>'
         + f'<div style="margin:8px 0 0;padding:10px 4px 0;border-top:1px solid {black};color:{black};font-size:11px;line-height:1.6;text-align:center;font-weight:700;{font}">{_esc(author)}</div>'
         + '</div>'

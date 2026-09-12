@@ -364,7 +364,7 @@ class AshareReviewTest(unittest.TestCase):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
         review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
         out = sources.build_html(brief, review=review)
-        self.assertIn("AI 复盘 · 最新 A 股", out)
+        self.assertIn("AI 研判", out)
         self.assertIn(sources._ASHARE_SNAPSHOT["date"], out)
         for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
                       "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"):

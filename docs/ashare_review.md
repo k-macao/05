@@ -1,6 +1,6 @@
 # 章鱼 AI · 最新 A 股复盘（六维度内容策略）
 
-> 位置：开篇 AI 部分。「AI 今天给你去噪音，留干货」四个观点之后，紧跟「AI 复盘 · 最新 A 股」板块。
+> 位置：开篇 AI 部分。「AI 每日总结」四个观点之后，紧跟「AI 研判」板块。
 > 复盘对象：**最新的 A 股行情**（≤ 推送日当前最近一个交易日，周末/长假自动向前回溯）。
 
 ---
@@ -40,7 +40,7 @@
 | ② | 接口数据不滞后（最新日 K ≥ 内置快照基线日期） | 日 K 倒退说明行情源异常 → 非最新 |
 | ③ | 复盘数据来自实时接口（`source ∈ {"eastmoney", "tencent"}`，非快照兜底）且复盘日 = 按「前天」口径最近一个可复盘交易日 | 快照兜底 / 复盘日落后 → 非最新 |
 
-检查结果 `freshness` 包含 `ok / reason / market_date / source / latest_kline_date / expected_date / checked_at`，`reason` 为可直接进日志的中文结论。**非最新时的行为**：`push_brief.py` 打印原因并以退出码 3 结束（GitHub Actions 显示为失败，便于发现）；本地服务返回 409 与原因。页面「AI 复盘 · 最新 A 股」标题右侧的「大盘数据」标签（`GET /api/market`）实时展示同一检查结果。
+检查结果 `freshness` 包含 `ok / reason / market_date / source / latest_kline_date / expected_date / checked_at`，`reason` 为可直接进日志的中文结论。**非最新时的行为**：`push_brief.py` 打印原因并以退出码 3 结束（GitHub Actions 显示为失败，便于发现）；本地服务返回 409 与原因。页面「AI 研判」标题右侧的「大盘数据」标签（`GET /api/market`）实时展示同一检查结果。
 
 测试/应急开关：`SKIP_MARKET_CHECK=1` 跳过检查直接推送；`MARKET_FRESHNESS_FORCE=fresh|stale` 强制检查结果。
 
