@@ -261,21 +261,29 @@ class SectorOpportunityTest(unittest.TestCase):
 
 
 class BuildHtmlTest(unittest.TestCase):
+    def _kanpan(self):
+        """注入三市场快照，避免 HTML 测试打行情接口，并让看盘内容可断言。"""
+        return dict(
+            review=sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT),
+            hk_review=sources.analyze_hk(market=sources._HK_SNAPSHOT),
+            us_review=sources.analyze_us(market=sources._US_SNAPSHOT),
+        )
+
     def test_build_html_contains_sources_and_items(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
-        out = sources.build_html(brief)
+        out = sources.build_html(brief, **self._kanpan())
         self.assertIn("覆盖 18 个数据源", out)
         self.assertIn("金十数据", out)
         self.assertIn("不构成投资建议", out)
 
     def test_build_html_renders_four_viewpoints(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
-        out = sources.build_html(brief)
+        out = sources.build_html(brief, **self._kanpan())
         for label in ("市场情绪", "多空博弈概率", "利好 / 利差板块", "资金流向分析"):
             self.assertIn(label, out)
 
     def test_build_html_empty_brief_renders_points_fallback(self):
-        out = sources.build_html({})
+        out = sources.build_html({}, **self._kanpan())
         self.assertIn("暂无可统计的多空信号", out)
         self.assertIn("资金流向分析", out)
         self.assertIn("暂无净多头信号占优的板块", out)
@@ -289,7 +297,7 @@ class BuildHtmlTest(unittest.TestCase):
                 {"title": "地产股债务逾期风险警示，房价下跌", "url": ""},
             ],
         }
-        out = sources.build_html(brief)
+        out = sources.build_html(brief, **self._kanpan())
         self.assertIn("AI 板块机会", out)
         self.assertIn("机会方向", out)
         self.assertIn("净多", out)
@@ -298,24 +306,24 @@ class BuildHtmlTest(unittest.TestCase):
         # 证据要带上数据源名称
         self.assertIn("华尔街见闻 快讯", out)
         self.assertIn("基于 3 条多空信号", out)
-        # 位置：紧跟「AI 每日总结」，在「AI 研判」之前（开头 AI 部分）。
+        # 位置：紧跟「AI 每日总结」，在「AI 看盘」之前（开头 AI 部分）。
         self.assertLess(out.index("AI 每日总结"), out.index("AI 板块机会"))
-        self.assertLess(out.index("AI 板块机会"), out.index("AI 研判"))
+        self.assertLess(out.index("AI 板块机会"), out.index("AI 看盘"))
 
     def test_build_html_opportunity_card_honest_when_no_signals(self):
-        out = sources.build_html({})
+        out = sources.build_html({}, **self._kanpan())
         self.assertIn("AI 板块机会", out)
         self.assertIn("暂无净多头信号占优的板块", out)
         self.assertNotIn("承压方向", out)
 
     def test_build_html_opportunity_evidence_is_escaped(self):
         brief = {"金十数据": [{"title": "AI 大模型扩产 <script>alert(1)</script> 暴涨", "url": ""}]}
-        out = sources.build_html(brief)
+        out = sources.build_html(brief, **self._kanpan())
         self.assertIn("&lt;script&gt;", out)
         self.assertNotIn("<script>alert", out)
 
     def test_escapes_html(self):
-        out = sources.build_html({"金十数据": [{"title": "<b>x</b>", "url": ""}]})
+        out = sources.build_html({"金十数据": [{"title": "<b>x</b>", "url": ""}]}, **self._kanpan())
         self.assertIn("&lt;b&gt;", out)
         self.assertNotIn("<b>x</b>", out)
 
@@ -325,7 +333,7 @@ class BuildHtmlTest(unittest.TestCase):
             name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/test"} for _ in range(20)]
             for name in sources.SOURCES
         }
-        out = sources.build_html(huge_brief)
+        out = sources.build_html(huge_brief, **self._kanpan())
         self.assertLessEqual(len(out), 19500)
 
     def test_build_html_member_mode_unlocks_full_items(self):
@@ -333,7 +341,7 @@ class BuildHtmlTest(unittest.TestCase):
         os.environ["PUSHPLUS_MEMBER"] = "1"
         try:
             brief = {name: sources._demo_items(name) for name in sources.SOURCES}
-            out = sources.build_html(brief)
+            out = sources.build_html(brief, **self._kanpan())
             self.assertTrue(sources._is_pushplus_member())
             for name in sources.SOURCES:
                 self.assertIn(sources._esc(name), out)
@@ -492,7 +500,7 @@ class AshareReviewTest(unittest.TestCase):
         # ⑤ 北向口径说明
         self.assertIn("北向资金", texts["主力资金与北向资金"])
         # ⑥ 后市观点与策略
-        self.assertIn("AI 研判", texts["后市观点与策略"])
+        self.assertIn("AI 看盘", texts["后市观点与策略"])
         self.assertIn("浙商证券", texts["后市观点与策略"])
 
     def test_snapshot_headline_mentions_leaders(self):
@@ -518,22 +526,129 @@ class AshareReviewTest(unittest.TestCase):
     def test_build_html_renders_ashare_review_card(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
         review = sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT)
-        out = sources.build_html(brief, review=review)
-        self.assertIn("AI 研判", out)
+        hk_review = sources.analyze_hk(market=sources._HK_SNAPSHOT)
+        us_review = sources.analyze_us(market=sources._US_SNAPSHOT)
+        out = sources.build_html(brief, review=review, hk_review=hk_review, us_review=us_review)
+        self.assertIn("AI 看盘", out)
         self.assertIn(sources._ASHARE_SNAPSHOT["date"], out)
         for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
                       "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"):
             self.assertIn(label, out)
         self.assertIn("偏多", out)
+        # 同一张「AI 看盘」卡覆盖 A 股 / 港股 / 美股。
+        self.assertIn("港股", out)
+        self.assertIn("美股", out)
+        self.assertIn("恒生指数", out)
+        self.assertIn("纳斯达克", out)
+        self.assertIn("南向资金", out)
+        self.assertIn("资金与避险", out)
 
     def test_review_sector_names_are_escaped(self):
         market = dict(sources._ASHARE_SNAPSHOT)
         market["leaders"] = [{"name": "<算力>", "note": "x"}]
         market["laggards"] = [{"name": "银行", "note": "x"}]
         brief = {"金十数据": [{"title": "x", "url": ""}]}
-        out = sources.build_html(brief, review=sources.analyze_ashare(market=market))
+        out = sources.build_html(
+            brief,
+            review=sources.analyze_ashare(market=market),
+            hk_review=sources.analyze_hk(market=sources._HK_SNAPSHOT),
+            us_review=sources.analyze_us(market=sources._US_SNAPSHOT),
+        )
         self.assertIn("&lt;算力&gt;", out)
         self.assertNotIn("<算力>", out)
+
+
+class OverseasReviewTest(unittest.TestCase):
+    """港股 / 美股看盘：六维度内容、离线兜底与 HTML 渲染。"""
+
+    def test_analyze_hk_has_six_dimensions(self):
+        review = sources.analyze_hk(market=sources._HK_SNAPSHOT)
+        self.assertEqual(review["date"], sources._HK_SNAPSHOT["date"])
+        self.assertEqual(
+            [p["label"] for p in review["points"]],
+            ["三大指数", "港股成交额", "涨跌家数",
+             "领涨 / 领跌板块", "南向资金", "后市观点与策略"],
+        )
+        self.assertTrue(all(p["text"] for p in review["points"]))
+        self.assertIn(review["bias"], ("偏多", "偏空", "中性"))
+        self.assertEqual(review["market"], "hk")
+
+    def test_analyze_hk_snapshot_content(self):
+        review = sources.analyze_hk(market=sources._HK_SNAPSHOT)
+        texts = {p["label"]: p["text"] for p in review["points"]}
+        self.assertIn("25842.16", texts["三大指数"])
+        self.assertIn("恒生科技", texts["三大指数"])
+        self.assertIn("1,862 亿港元", texts["港股成交额"])
+        self.assertIn("超1200只", texts["涨跌家数"])
+        self.assertIn("科技硬件", texts["领涨 / 领跌板块"])
+        self.assertIn("地产", texts["领涨 / 领跌板块"])
+        self.assertIn("南向资金", texts["南向资金"])
+        self.assertIn("AI 看盘", texts["后市观点与策略"])
+        self.assertIn("高盛", texts["后市观点与策略"])
+
+    def test_analyze_us_has_six_dimensions(self):
+        review = sources.analyze_us(market=sources._US_SNAPSHOT)
+        self.assertEqual(review["date"], sources._US_SNAPSHOT["date"])
+        self.assertEqual(
+            [p["label"] for p in review["points"]],
+            ["三大指数", "美股成交额", "涨跌家数",
+             "领涨 / 领跌板块", "资金与避险", "后市观点与策略"],
+        )
+        self.assertTrue(all(p["text"] for p in review["points"]))
+        self.assertIn(review["bias"], ("偏多", "偏空", "中性"))
+        self.assertEqual(review["market"], "us")
+
+    def test_analyze_us_snapshot_content(self):
+        review = sources.analyze_us(market=sources._US_SNAPSHOT)
+        texts = {p["label"]: p["text"] for p in review["points"]}
+        self.assertIn("6488.20", texts["三大指数"])
+        self.assertIn("纳斯达克", texts["三大指数"])
+        self.assertIn("4,820 亿美元", texts["美股成交额"])
+        self.assertIn("半导体", texts["领涨 / 领跌板块"])
+        self.assertIn("能源", texts["领涨 / 领跌板块"])
+        self.assertIn("VIX", texts["资金与避险"])
+        self.assertIn("AI 看盘", texts["后市观点与策略"])
+        self.assertIn("英伟达", texts["后市观点与策略"])
+
+    def test_hk_us_headline_mentions_leaders(self):
+        hk = sources.analyze_hk(market=sources._HK_SNAPSHOT)
+        self.assertIn("科技硬件", hk["headline"])
+        self.assertIn("恒生科技", hk["headline"])
+        us = sources.analyze_us(market=sources._US_SNAPSHOT)
+        self.assertIn("半导体", us["headline"])
+        self.assertIn("纳斯达克", us["headline"])
+
+    def test_get_hk_us_market_falls_back_offline(self):
+        original = sources.urlopen
+
+        def _offline(*args, **kwargs):
+            raise OSError("network unreachable")
+
+        sources.urlopen = _offline
+        try:
+            hk = sources.get_hk_market()
+            us = sources.get_us_market()
+        finally:
+            sources.urlopen = original
+        self.assertEqual(hk["date"], sources._get_fallback_review_date())
+        self.assertEqual(hk["source"], "snapshot")
+        self.assertEqual(us["date"], sources._get_fallback_review_date())
+        self.assertEqual(us["source"], "snapshot")
+
+    def test_build_simple_market_from_klines(self):
+        candle = sources._parse_ashare_candle(
+            "2026-08-28,25000.0,25842.16,25900.0,24900.0,1000000,186200000000.0,1.8,1.28,326.40,1.0")
+        klines = {name: {"2026-08-28": dict(candle)} for name, _ in sources._HK_INDICES}
+        market = sources._build_simple_market(
+            klines, date(2026, 8, 28),
+            [name for name, _ in sources._HK_INDICES], sources._HK_SNAPSHOT,
+            turnover_names=["恒生指数"], turnover_unit="亿港元",
+        )
+        self.assertEqual(market["source"], "eastmoney")
+        self.assertEqual(market["date"], "2026-08-28")
+        self.assertEqual(len(market["indices"]), 3)
+        self.assertEqual(market["turnover"]["amount"], 1862)
+        self.assertEqual(market["turnover"]["unit"], "亿港元")
 
 
 class MarketFreshnessTest(unittest.TestCase):

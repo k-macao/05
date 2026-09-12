@@ -91,7 +91,7 @@ class MarketGateTest(unittest.TestCase):
             payload = json.load(f)["payload"]
         self.assertEqual(payload["token"], "fake-token-gate")
         self.assertIn("章鱼", payload["title"])
-        self.assertIn("AI 研判", payload["content"])  # 研判板块随简报一同推送
+        self.assertIn("AI 看盘", payload["content"])  # 看盘板块随简报一同推送
         self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送
 
     def test_skip_market_check_bypasses_gate(self):

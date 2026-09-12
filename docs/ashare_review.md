@@ -1,7 +1,7 @@
-# 章鱼 AI · 最新 A 股复盘（六维度内容策略）
+# 章鱼 AI · 最新看盘（A 股 / 港股 / 美股）
 
-> 位置：开篇 AI 部分。「AI 每日总结」四个观点之后，紧跟「AI 研判」板块。
-> 复盘对象：**最新的 A 股行情**（≤ 推送日当前最近一个交易日，周末/长假自动向前回溯）。
+> 位置：开篇 AI 部分。「AI 每日总结」四个观点之后，紧跟「AI 看盘」板块。
+> 复盘对象：**最新的 A 股、港股、美股行情**（≤ 推送日当前最近一个交易日，周末/长假自动向前回溯）。
 
 ---
 
@@ -14,9 +14,16 @@
 | ③ | 涨跌家数与涨跌停 | 全市场上涨家数、涨停 / 跌停家数、炸板数与封板率、连板高度（最高连板股）；赚钱效应与短线情绪温度 |
 | ④ | 领涨 / 领跌板块 | 领涨主线（含代表性涨停个股）与领跌 / 退潮方向；资金高低切换点评 |
 | ⑤ | 主力资金与北向资金 | 机构 / 主力资金净流入的主攻方向；北向资金实时数据自 2024 年 8 月起停止披露，改用主力资金与两融口径观察 |
-| ⑥ | 后市观点与策略 | AI 综合研判（偏多 / 偏空 / 中性 + 操作策略：仓位、参与方向、风险提示）+ 行情催化 + 机构观点 |
+| ⑥ | 后市观点与策略 | AI 综合看盘（偏多 / 偏空 / 中性 + 操作策略：仓位、参与方向、风险提示）+ 行情催化 + 机构观点 |
 
-每个维度的文字由 `analyze_ashare()` 依据行情数据**动态生成**（与 `analyze_brief()` 同为本地「AI 总结」引擎，零第三方依赖、可离线运行）；如需接入在线大模型，覆盖 `analyze_ashare()` 的返回值即可（字段保持一致）。
+同一张「AI 看盘」卡还覆盖港股与美股，口径略作市场适配：
+
+| 市场 | 指数 | 量能 | 广度 | 资金 |
+|------|------|------|------|------|
+| 港股 | 恒生指数、恒生科技、国企指数 | 港股成交额（亿港元） | 涨跌家数 | 南向资金 |
+| 美股 | 道琼斯、标普500、纳斯达克 | 美股成交额（亿美元） | 涨跌家数 | 资金与避险（科技回流 / VIX） |
+
+每个维度的文字由 `analyze_ashare()` / `analyze_hk()` / `analyze_us()` 依据行情数据**动态生成**（与 `analyze_brief()` 同为本地「AI 总结」引擎，零第三方依赖、可离线运行）；如需接入在线大模型，覆盖对应函数的返回值即可（字段保持一致）。
 
 ## 二、数据链路
 
@@ -24,11 +31,13 @@
 
 | 数据 | 接口 / 来源 | 说明 |
 |------|-------------|------|
-| 四大指数日 K（主源） | 东方财富 `push2his.eastmoney.com/api/qt/stock/kline/get`（klt=101） | 含收盘价、涨跌幅、涨跌点、成交额，支持按日回溯 |
-| 四大指数日 K（备用源） | 腾讯证券 `web.ifzq.gtimg.cn/appstock/app/fqkline/get`（param=代码,day,,,17,qfq） | 主源失联或缺指数时自动补位；含收盘价，涨跌额/涨跌幅由相邻两日收盘价推算；不含成交额（该维度自动降级不展示） |
+| A 股四大指数日 K（主源） | 东方财富 `push2his.eastmoney.com/api/qt/stock/kline/get`（klt=101） | 含收盘价、涨跌幅、涨跌点、成交额，支持按日回溯 |
+| A 股四大指数日 K（备用源） | 腾讯证券 `web.ifzq.gtimg.cn/appstock/app/fqkline/get`（param=代码,day,,,17,qfq） | 主源失联或缺指数时自动补位；含收盘价，涨跌额/涨跌幅由相邻两日收盘价推算；不含成交额（该维度自动降级不展示） |
+| 港股三大指数日 K | 东方财富 `100.HSI` / `100.HSTECH` / `100.HSCEI`；备用腾讯 `hkHSI` / `hkHSTECH` / `hkHSCEI` | 恒生、恒生科技、国企指数，链路与 A 股相同 |
+| 美股三大指数日 K | 东方财富 `100.DJIA` / `100.SPX` / `100.IXIC`；备用腾讯 `usDJI` / `usINX` / `usIXIC` | 道指、标普、纳指，链路与 A 股相同 |
 | 涨停 / 跌停家数、连板行业分布 | 东方财富 `push2ex.eastmoney.com/getTopicZTPool` / `getTopicDTPool`（date=YYYYMMDD） | 历史涨停 / 跌停池，`tc` 为家数，`hybk` 为行业（领涨 / 领跌线索） |
 | 涨跌家数、封板率、连板高度、板块点评、资金流向、机构观点 | 内置真实快照（当日盘后收评交叉核对） | 实时路径无法按日回溯的口径，由快照提供 |
-| 兜底 | `_ASHARE_SNAPSHOT`（内置收盘快照，复盘日期按当前日期自动推导） | 主备源均不可用时自动回退，日期根据当前日期动态推导至最近交易日（如 2026-08-28） |
+| 兜底 | `_ASHARE_SNAPSHOT` / `_HK_SNAPSHOT` / `_US_SNAPSHOT`（内置收盘快照，复盘日期按当前日期自动推导） | 主备源均不可用时自动回退，日期根据当前日期动态推导至最近交易日 |
 
 ## 三、推送前新鲜度检查（不是最新就不推）
 
@@ -40,7 +49,7 @@
 | ② | 接口数据不滞后（最新日 K ≥ 内置快照基线日期） | 日 K 倒退说明行情源异常 → 非最新 |
 | ③ | 复盘数据来自实时接口（`source ∈ {"eastmoney", "tencent"}`，非快照兜底）且复盘日 = 按「前天」口径最近一个可复盘交易日 | 快照兜底 / 复盘日落后 → 非最新 |
 
-检查结果 `freshness` 包含 `ok / reason / market_date / source / latest_kline_date / expected_date / checked_at`，`reason` 为可直接进日志的中文结论。**非最新时的行为**：`push_brief.py` 打印原因并以退出码 3 结束（GitHub Actions 显示为失败，便于发现）；本地服务返回 409 与原因。页面「AI 研判」标题右侧的「大盘数据」标签（`GET /api/market`）实时展示同一检查结果。
+检查结果 `freshness` 包含 `ok / reason / market_date / source / latest_kline_date / expected_date / checked_at`，`reason` 为可直接进日志的中文结论。**非最新时的行为**：`push_brief.py` 打印原因并以退出码 3 结束（GitHub Actions 显示为失败，便于发现）；本地服务返回 409 与原因。页面「AI 看盘」标题右侧的「大盘数据」标签（`GET /api/market`）实时展示同一检查结果。
 
 测试/应急开关：`SKIP_MARKET_CHECK=1` 跳过检查直接推送；`MARKET_FRESHNESS_FORCE=fresh|stale` 强制检查结果。
 
@@ -61,11 +70,13 @@
 
 | 函数 | 作用 |
 |------|------|
-| `get_ashare_market()` | 采集「前天」A 股行情（东方财富接口 → 快照兜底），返回 market 字典 |
+| `get_ashare_market()` | 采集最新 A 股行情（东方财富接口 → 快照兜底），返回 market 字典 |
+| `get_hk_market()` / `get_us_market()` | 采集最新港股 / 美股行情（东方财富 → 腾讯证券 → 快照兜底） |
 | `_build_ashare_market(klines, today)` | 同上，但日 K 由调用方注入（与网络解耦，供闸门与测试复用） |
 | `check_market_freshness(market, klines, today)` | 大盘数据新鲜度检查（推送闸门），返回 ok / reason / 日期明细 |
 | `collect_market_for_push()` | 推送入口专用：一次抓取返回 (market, freshness)，支持 MARKET_FRESHNESS_FORCE |
-| `analyze_ashare(market=None)` | 六维度 AI 复盘，返回 headline / bias / points 等结构化结果 |
-| `build_html(brief, now=None, review=None)` | `review` 缺省时自动调用 `analyze_ashare()`，在开篇 AI 部分渲染复盘卡 |
+| `analyze_ashare(market=None)` | A 股六维度 AI 看盘，返回 headline / bias / points 等结构化结果 |
+| `analyze_hk(market=None)` / `analyze_us(market=None)` | 港股 / 美股六维度 AI 看盘 |
+| `build_html(brief, now=None, review=None, hk_review=None, us_review=None)` | 缺省时自动调用三市场分析函数，在开篇「AI 看盘」卡渲染 A 股 / 港股 / 美股 |
 
-单元测试见 `test_sources.py::AshareReviewTest`（六维度断言、K 线解析、复盘日选取、离线兜底、HTML 渲染与转义）。
+单元测试见 `test_sources.py::AshareReviewTest`（六维度断言、K 线解析、复盘日选取、离线兜底、HTML 渲染与转义）与 `OverseasReviewTest`（港股 / 美股六维度、离线兜底与日 K 组装）。

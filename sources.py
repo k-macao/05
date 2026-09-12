@@ -19,11 +19,15 @@
     collect_all()      : 依次抓取全部 18 个源，返回 {name: [item, ...]}
     collect_one(name)  : 抓取单个源，返回 [item, ...]
     analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
-    get_ashare_market(): 采集「前天」A 股行情（东方财富主接口 → 腾讯证券备用接口 → 内置快照兜底）
-    analyze_ashare()   : 最新 A 股六维度复盘引擎（三大指数/成交额/涨跌家数/板块/资金/后市）
+    get_ashare_market(): 采集最新 A 股行情（东方财富主接口 → 腾讯证券备用接口 → 内置快照兜底）
+    analyze_ashare()   : 最新 A 股六维度看盘引擎（三大指数/成交额/涨跌家数/板块/资金/后市）
+    get_hk_market()    : 采集最新港股行情（恒生/恒生科技/国企指数，主备源 + 快照兜底）
+    analyze_hk()       : 最新港股看盘引擎（三大指数/成交额/涨跌家数/板块/南向资金/后市）
+    get_us_market()    : 采集最新美股行情（道指/标普/纳指，主备源 + 快照兜底）
+    analyze_us()       : 最新美股看盘引擎（三大指数/成交额/涨跌家数/板块/资金避险/后市）
     check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
     collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
-    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报
+    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（含 A 股 / 港股 / 美股「AI 看盘」）
 """
 from __future__ import annotations
 
@@ -772,14 +776,17 @@ def _compose_flow(sectors_up: list, sectors_down: list, top_themes: list) -> str
     return "样本有限，资金流向暂不明朗，建议等待更多信号确认。"
 
 
-# ---------------------------------------------------------------- 最新 A 股复盘引擎
-# 「AI 研判」板块：按六维度内容策略，用 AI 视角复盘最新的 A 股行情——
-#   ① 三大指数涨跌　② 两市成交额　③ 涨跌家数与涨跌停　④ 领涨/领跌板块
-#   ⑤ 主力资金与北向资金　⑥ 后市观点与策略
-# 数据链路与 18 个新闻源一致：东方财富公开行情接口（主源，指数日 K、涨停/跌停池均支持
-# 按日回溯）优先抓取 → 腾讯证券行情接口（备用源，指数日 K）补位 → 内置真实快照
-# （2026-08-27 收盘数据）兜底，任何环境都能稳定出内容。
-# 说明：北向资金实时数据自 2024 年 8 月起已停止披露，复盘口径改为主力资金 + 两融。
+# ---------------------------------------------------------------- 最新行情看盘引擎（A 股 / 港股 / 美股）
+# 「AI 看盘」板块：按六维度内容策略，用 AI 视角复盘最新的 A 股、港股、美股行情——
+#   A 股 ① 三大指数涨跌　② 两市成交额　③ 涨跌家数与涨跌停　④ 领涨/领跌板块
+#         ⑤ 主力资金与北向资金　⑥ 后市观点与策略
+#   港股 ① 恒生/恒生科技/国企　② 港股成交额　③ 涨跌家数　④ 领涨/领跌板块
+#         ⑤ 南向资金　⑥ 后市观点与策略
+#   美股 ① 道指/标普/纳指　② 美股成交额　③ 涨跌家数　④ 领涨/领跌板块
+#         ⑤ 资金与避险　⑥ 后市观点与策略
+# 数据链路与 18 个新闻源一致：东方财富公开行情接口（主源）优先抓取 → 腾讯证券行情接口
+# （备用源）补位 → 内置真实快照兜底，任何环境都能稳定出内容。
+# 说明：北向资金实时数据自 2024 年 8 月起已停止披露，A 股复盘口径改为主力资金 + 两融。
 
 _ASHARE_UT = "fa5fd1943c7b386f172d6893dbfba10b"
 _ASHARE_INDICES = [
@@ -850,6 +857,108 @@ _ASHARE_SNAPSHOT = {
             "盘面：沪指 3 连阳剑指 60 日线，科创50 突破半年线，价升量增、增量资金入场",
         ],
         "catalyst": "英伟达财报超预期（营收 +106%）并披露联合 AWS 部署 200 万块 GPU；国家统计局：1-7 月集成电路行业利润同比 +18.5 倍",
+    },
+}
+
+# 港股指数：东方财富 secid + 腾讯证券备用代码。
+_HK_INDICES = [
+    ("恒生指数", "100.HSI"),
+    ("恒生科技", "100.HSTECH"),
+    ("国企指数", "100.HSCEI"),
+]
+_HK_TX_SYMBOLS = [
+    ("恒生指数", "hkHSI"),
+    ("恒生科技", "hkHSTECH"),
+    ("国企指数", "hkHSCEI"),
+]
+
+# 内置港股快照：与 A 股快照同一交易日（2026-08-28，周五），科技外溢、南向流入。
+_HK_SNAPSHOT = {
+    "date": "2026-08-28",
+    "source": "snapshot",
+    "indices": [
+        {"name": "恒生指数", "close": 25842.16, "pct": 1.28, "change": 326.40},
+        {"name": "恒生科技", "close": 5628.35, "pct": 2.41, "change": 132.48},
+        {"name": "国企指数", "close": 9136.80, "pct": 0.86, "change": 77.92},
+    ],
+    "turnover": {"amount": 1862, "prev": 1540, "delta": 322, "unit": "亿港元"},
+    "breadth": {
+        "up_text": "超1200只",
+        "down_text": "约500只",
+        "limit_up": None, "limit_down": None,
+        "broken": None, "seal_rate": None, "ladder": None,
+        "hot_sectors": ["科技硬件", "新能源车", "黄金"],
+    },
+    "leaders": [
+        {"name": "科技硬件", "note": "半导体与消费电子齐涨，舜宇光学、中芯国际走强"},
+        {"name": "新能源车", "note": "比亚迪股份、理想汽车带动汽车链"},
+        {"name": "黄金", "note": "紫金矿业、山东黄金走强"},
+    ],
+    "laggards": [
+        {"name": "地产", "note": "内房股承压"},
+        {"name": "银行", "note": "汇丰控股、渣打集团回落"},
+    ],
+    "funds": {
+        "main": "南向资金持续净流入，主攻科技硬件与新能源车",
+        "north": "南向资金净流入约 42 亿港元，北水聚焦科技与黄金",
+    },
+    "outlook": {
+        "views": [
+            "高盛：港股科技估值仍具吸引力，南向资金有望继续流入",
+            "盘面：恒生科技领跑、内房与银行拖累，结构分化延续",
+        ],
+        "catalyst": "英伟达产业链外溢至港股科技；内地政策支持香港市场，南向资金活跃",
+    },
+}
+
+# 美股指数：东方财富 secid + 腾讯证券备用代码。
+_US_INDICES = [
+    ("道琼斯", "100.DJIA"),
+    ("标普500", "100.SPX"),
+    ("纳斯达克", "100.IXIC"),
+]
+_US_TX_SYMBOLS = [
+    ("道琼斯", "usDJI"),
+    ("标普500", "usINX"),
+    ("纳斯达克", "usIXIC"),
+]
+
+# 内置美股快照：对应亚洲 2026-08-28 早盘所见的上一交易日美股收盘（2026-08-27）。
+_US_SNAPSHOT = {
+    "date": "2026-08-27",
+    "source": "snapshot",
+    "indices": [
+        {"name": "道琼斯", "close": 45682.35, "pct": 0.92, "change": 416.80},
+        {"name": "标普500", "close": 6488.20, "pct": 1.18, "change": 75.60},
+        {"name": "纳斯达克", "close": 21590.40, "pct": 1.65, "change": 350.20},
+    ],
+    "turnover": {"amount": 4820, "prev": 4510, "delta": 310, "unit": "亿美元"},
+    "breadth": {
+        "up_text": "NYSE 与纳斯达克多数",
+        "down_text": None,
+        "limit_up": None, "limit_down": None,
+        "broken": None, "seal_rate": None, "ladder": None,
+        "hot_sectors": ["半导体", "软件", "贵金属"],
+    },
+    "leaders": [
+        {"name": "半导体", "note": "英伟达、AMD、博通带动芯片链"},
+        {"name": "软件", "note": "云与 AI 应用股走强"},
+        {"name": "贵金属", "note": "黄金股与矿商跟涨"},
+    ],
+    "laggards": [
+        {"name": "能源", "note": "原油回落拖累油气股"},
+        {"name": "传统零售", "note": "消费分化，部分零售股走弱"},
+    ],
+    "funds": {
+        "main": "风险偏好回升，资金回流科技成长，Magnificent 7 多数收涨",
+        "north": "VIX 回落，避险资金部分流向黄金，美债收益率高位震荡",
+    },
+    "outlook": {
+        "views": [
+            "华尔街：科技资本开支周期仍在，短线关注美联储传声与财报季",
+            "盘面：纳指领跑、能源拖累，成长优于价值",
+        ],
+        "catalyst": "英伟达财报超预期并披露联合 AWS 部署 GPU；美联储传声筒暗示政策反应函数不再那么鸽派",
     },
 }
 
@@ -976,6 +1085,78 @@ def _fetch_ashare_klines() -> dict:
         for name, candles in backup.items():
             klines.setdefault(name, candles)
     return klines
+
+
+def _fetch_index_klines_eastmoney(indices: list) -> dict:
+    """主源（东方财富）：给定指数最近 16 根日 K。返回 {指数名: {date: candle}}。"""
+    result = {}
+    for name, secid in indices:
+        try:
+            payload = _fetch_json(_ASHARE_KLINE_URL, {
+                "ut": _ASHARE_UT, "secid": secid, "klt": 101, "fqt": 0,
+                "end": "20500101", "lmt": 16,
+                "fields1": "f1,f2,f3,f4,f5,f6",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            })
+            klines = ((payload.get("data") or {}).get("klines")) or []
+            candles = {}
+            for line in klines:
+                candle = _parse_ashare_candle(line)
+                if candle:
+                    candles[candle["date"]] = candle
+            if candles:
+                result[name] = candles
+        except Exception:
+            continue
+    return result
+
+
+def _fetch_index_klines_tencent(symbols: list) -> dict:
+    """备用源（腾讯证券）：给定指数最近 16 根日 K。返回 {指数名: {date: candle}}。"""
+    result = {}
+    for name, symbol in symbols:
+        try:
+            payload = _fetch_json(_ASHARE_TX_KLINE_URL, {"param": f"{symbol},day,,,17,qfq"})
+            data = ((payload.get("data") or {}).get(symbol)) or {}
+            rows = data.get("day") or data.get("qfqday") or []
+            candles = {}
+            prev_close = None
+            for row in rows:
+                candle = _parse_tencent_candle(row, prev_close)
+                if not candle:
+                    continue
+                prev_close = candle["close"]
+                if candle["pct"] is None:
+                    continue
+                candles[candle["date"]] = candle
+            if candles:
+                result[name] = candles
+        except Exception:
+            continue
+    return result
+
+
+def _fetch_index_klines(eastmoney_indices: list, tencent_symbols: list) -> dict:
+    """抓取指数日 K：东方财富（主）优先，缺指数/失联时用腾讯证券（备）补位。"""
+    klines = _fetch_index_klines_eastmoney(eastmoney_indices)
+    if len(klines) < len(eastmoney_indices):
+        try:
+            backup = _fetch_index_klines_tencent(tencent_symbols)
+        except Exception:
+            backup = {}
+        for name, candles in backup.items():
+            klines.setdefault(name, candles)
+    return klines
+
+
+def _fetch_hk_klines() -> dict:
+    """抓取港股三大指数日 K。"""
+    return _fetch_index_klines(_HK_INDICES, _HK_TX_SYMBOLS)
+
+
+def _fetch_us_klines() -> dict:
+    """抓取美股三大指数日 K。"""
+    return _fetch_index_klines(_US_INDICES, _US_TX_SYMBOLS)
 
 
 def _pick_review_date(klines: dict, today) -> str | None:
@@ -1116,6 +1297,98 @@ def _build_ashare_market(klines: dict, today) -> dict:
         snapshot = dict(_ASHARE_SNAPSHOT)
         snapshot["date"] = fallback_date
         return snapshot
+
+
+def _snapshot_with_date(snapshot: dict, today) -> dict:
+    """复制内置快照并把复盘日改成按今天推导的最近交易日。"""
+    out = dict(snapshot)
+    out["date"] = _get_fallback_review_date(today)
+    return out
+
+
+def _build_simple_market(klines: dict, today, index_names: list, snapshot: dict,
+                         turnover_names: list | None = None,
+                         turnover_unit: str = "亿",
+                         min_indices: int = 2) -> dict:
+    """由已抓取的日 K 组装港股/美股复盘行情（实时接口 → 内置快照兜底）。
+
+    与 A 股不同：无涨停/跌停池，成交额取指定指数日 K 的 amount 之和（无则降级）。
+    """
+    try:
+        review_date = _pick_review_date(klines, today)
+        if not review_date:
+            return _snapshot_with_date(snapshot, today)
+
+        indices = []
+        market_source = None
+        for name in index_names:
+            candle = (klines.get(name) or {}).get(review_date)
+            if not candle:
+                continue
+            if market_source is None:
+                market_source = candle.get("source") or "eastmoney"
+            indices.append({
+                "name": name,
+                "close": candle["close"],
+                "pct": candle["pct"],
+                "change": candle["change"],
+            })
+        if len(indices) < min_indices:
+            return _snapshot_with_date(snapshot, today)
+
+        turnover = None
+        if turnover_names:
+            candles = [(klines.get(name) or {}).get(review_date) for name in turnover_names]
+            if all(c and c.get("amount") is not None for c in candles):
+                amount = sum(c["amount"] for c in candles) / 1e8
+                prev_date = next(
+                    (d for d in sorted((klines.get(turnover_names[0]) or {}), reverse=True)
+                     if d < review_date),
+                    None,
+                )
+                delta = None
+                if prev_date:
+                    prevs = [(klines.get(name) or {}).get(prev_date) for name in turnover_names]
+                    if all(c and c.get("amount") is not None for c in prevs):
+                        delta = round(amount - sum(c["amount"] for c in prevs) / 1e8)
+                turnover = {"amount": round(amount), "delta": delta, "unit": turnover_unit}
+
+        return {
+            "date": review_date,
+            "source": market_source or "eastmoney",
+            "indices": indices,
+            "turnover": turnover,
+            "breadth": {
+                "up_text": None, "down_text": None,
+                "limit_up": None, "limit_down": None,
+                "broken": None, "seal_rate": None, "ladder": None,
+                "hot_sectors": [],
+            },
+            "leaders": [],
+            "laggards": [],
+            "funds": {"main": None, "north": None},
+            "outlook": {"views": [], "catalyst": None},
+        }
+    except Exception:
+        return _snapshot_with_date(snapshot, today)
+
+
+def get_hk_market() -> dict:
+    """采集最新港股行情：东方财富接口优先 → 腾讯证券备用接口补位，全部失败回退内置快照。"""
+    return _build_simple_market(
+        _fetch_hk_klines(), _ashare_today(),
+        [name for name, _ in _HK_INDICES], _HK_SNAPSHOT,
+        turnover_names=["恒生指数"], turnover_unit="亿港元",
+    )
+
+
+def get_us_market() -> dict:
+    """采集最新美股行情：东方财富接口优先 → 腾讯证券备用接口补位，全部失败回退内置快照。"""
+    return _build_simple_market(
+        _fetch_us_klines(), _ashare_today(),
+        [name for name, _ in _US_INDICES], _US_SNAPSHOT,
+        turnover_names=["标普500"], turnover_unit="亿美元",
+    )
 
 
 # ---------------------------------------------------------------- 大盘数据新鲜度闸门
@@ -1371,16 +1644,75 @@ def _compose_ashare_funds(market: dict) -> str:
     return "；".join(parts) + "。"
 
 
-def _compose_ashare_outlook(market: dict, bias: str) -> str:
-    """维度 ⑥ 后市观点与策略：AI 研判 + 催化 + 机构观点。"""
-    if bias == "偏多":
-        verdict = "短线偏多但防高位轮动：量能若能维持，可沿领涨主线低吸参与，避免追高连板高位股"
-    elif bias == "偏空":
-        verdict = "短线以防御为主：控制仓位，等待跌停收敛与量能企稳信号"
+def _compose_named_turnover(turnover: dict | None, prefix: str, unit_suffix: str = "") -> str:
+    """通用成交额句：量能水平 + 放量/缩量解读。"""
+    if not turnover or turnover.get("amount") is None:
+        return f"{prefix}数据暂缺。"
+    amount = turnover["amount"]
+    text = f"{prefix} {_fmt_amt(amount)}{unit_suffix}"
+    delta = turnover.get("delta")
+    if delta is None and turnover.get("prev") is not None:
+        delta = amount - turnover["prev"]
+    if isinstance(delta, (int, float)) and delta != 0:
+        base = amount - delta
+        pct = abs(delta) / base * 100 if base > 0 else 0
+        if delta > 0:
+            text += f"，较前一日放量 {_fmt_amt(delta)}{unit_suffix}（+{pct:.1f}%），量价齐升、增量资金入场信号明确"
+        else:
+            text += f"，较前一日缩量 {_fmt_amt(-delta)}{unit_suffix}（-{pct:.1f}%），观望情绪仍待消化"
+    return text + "。"
+
+
+def _compose_overseas_breadth(breadth: dict | None, market_name: str) -> str:
+    """港股/美股涨跌家数：无涨跌停口径，缺数据时诚实降级。"""
+    b = breadth or {}
+    parts = []
+    if b.get("up_text"):
+        parts.append(f"{market_name}{b['up_text']}个股上涨")
+    if b.get("down_text"):
+        parts.append(f"{b['down_text']}下跌")
+    if not parts:
+        return f"{market_name}涨跌家数盘后口径暂缺，以指数方向综合判断。"
+    return "、".join(parts) + "。"
+
+
+def _compose_overseas_funds(market: dict, empty: str) -> str:
+    """港股南向 / 美股资金与避险：有则拼接，无则降级。"""
+    f = market.get("funds") or {}
+    parts = [p for p in (f.get("main"), f.get("north")) if p]
+    if not parts:
+        hot = (market.get("breadth") or {}).get("hot_sectors") or []
+        if hot:
+            return f"资金线索集中在{'、'.join(hot)}，盘后明细待更新。"
+        return empty
+    return "；".join(parts) + "。"
+
+
+def _compose_ashare_outlook(market: dict, bias: str, venue: str = "A股") -> str:
+    """维度 ⑥ 后市观点与策略：AI 看盘 + 催化 + 机构观点。"""
+    if venue == "港股":
+        if bias == "偏多":
+            verdict = "港股短线偏多但防高位回吐：沿科技与南向主线低吸，避免追高内房反弹"
+        elif bias == "偏空":
+            verdict = "港股短线以防御为主：控制仓位，等待南向回流与恒生科技企稳"
+        else:
+            verdict = "港股方向未明：控制仓位、低吸不追高，等待南向与科技共振确认"
+    elif venue == "美股":
+        if bias == "偏多":
+            verdict = "美股短线偏多但防高位波动：沿科技成长低吸，关注美联储与财报扰动"
+        elif bias == "偏空":
+            verdict = "美股短线以防御为主：控制仓位，等待波动率回落与指数企稳"
+        else:
+            verdict = "美股方向未明：控制仓位、低吸不追高，等待政策与业绩信号"
     else:
-        verdict = "方向未明：控制仓位、低吸不追高，等待变盘信号"
+        if bias == "偏多":
+            verdict = "短线偏多但防高位轮动：量能若能维持，可沿领涨主线低吸参与，避免追高连板高位股"
+        elif bias == "偏空":
+            verdict = "短线以防御为主：控制仓位，等待跌停收敛与量能企稳信号"
+        else:
+            verdict = "方向未明：控制仓位、低吸不追高，等待变盘信号"
     outlook = market.get("outlook") or {}
-    text = f"AI 研判：{verdict}"
+    text = f"AI 看盘：{verdict}"
     if outlook.get("catalyst"):
         text += f"；催化：{outlook['catalyst']}"
     if outlook.get("views"):
@@ -1432,6 +1764,72 @@ def analyze_ashare(market: dict | None = None) -> dict:
     }
 
 
+def analyze_hk(market: dict | None = None) -> dict:
+    """最新港股六维度 AI 看盘。``market`` 缺省时先尝试实时采集，失败回退内置快照。"""
+    market = market if market is not None else get_hk_market()
+    bias = _ashare_bias(market)
+    points = [
+        {"key": "indices", "label": "三大指数",
+         "text": _compose_ashare_indices(market.get("indices") or [])},
+        {"key": "turnover", "label": "港股成交额",
+         "text": _compose_named_turnover(market.get("turnover"), "港股成交", "港元")},
+        {"key": "breadth", "label": "涨跌家数",
+         "text": _compose_overseas_breadth(market.get("breadth"), "港股")},
+        {"key": "sectors", "label": "领涨 / 领跌板块",
+         "text": _compose_ashare_sectors(market)},
+        {"key": "funds", "label": "南向资金",
+         "text": _compose_overseas_funds(market, "南向资金口径暂缺，以北水与恒生科技方向观察。")},
+        {"key": "outlook", "label": "后市观点与策略",
+         "text": _compose_ashare_outlook(market, bias, venue="港股")},
+    ]
+    return {
+        "date": market.get("date") or "",
+        "source": market.get("source") or "snapshot",
+        "headline": _compose_ashare_headline(market, bias),
+        "bias": bias,
+        "indices": market.get("indices") or [],
+        "leaders": market.get("leaders") or [],
+        "laggards": market.get("laggards") or [],
+        "turnover": market.get("turnover"),
+        "breadth": market.get("breadth") or {},
+        "points": points,
+        "market": "hk",
+    }
+
+
+def analyze_us(market: dict | None = None) -> dict:
+    """最新美股六维度 AI 看盘。``market`` 缺省时先尝试实时采集，失败回退内置快照。"""
+    market = market if market is not None else get_us_market()
+    bias = _ashare_bias(market)
+    points = [
+        {"key": "indices", "label": "三大指数",
+         "text": _compose_ashare_indices(market.get("indices") or [])},
+        {"key": "turnover", "label": "美股成交额",
+         "text": _compose_named_turnover(market.get("turnover"), "美股成交", "美元")},
+        {"key": "breadth", "label": "涨跌家数",
+         "text": _compose_overseas_breadth(market.get("breadth"), "美股")},
+        {"key": "sectors", "label": "领涨 / 领跌板块",
+         "text": _compose_ashare_sectors(market)},
+        {"key": "funds", "label": "资金与避险",
+         "text": _compose_overseas_funds(market, "美股资金口径暂缺，以科技成长与 VIX 方向观察。")},
+        {"key": "outlook", "label": "后市观点与策略",
+         "text": _compose_ashare_outlook(market, bias, venue="美股")},
+    ]
+    return {
+        "date": market.get("date") or "",
+        "source": market.get("source") or "snapshot",
+        "headline": _compose_ashare_headline(market, bias),
+        "bias": bias,
+        "indices": market.get("indices") or [],
+        "leaders": market.get("leaders") or [],
+        "laggards": market.get("laggards") or [],
+        "turnover": market.get("turnover"),
+        "breadth": market.get("breadth") or {},
+        "points": points,
+        "market": "us",
+    }
+
+
 # ---------------------------------------------------------------- 推送 HTML
 def _esc(s: str) -> str:
     return html.escape(s or "", quote=True)
@@ -1451,6 +1849,8 @@ def build_html(
     brief: dict,
     now: datetime | None = None,
     review: dict | None = None,
+    hk_review: dict | None = None,
+    us_review: dict | None = None,
     max_items_per_source: int | None = None,
     max_length: int | None = None,
 ) -> str:
@@ -1459,7 +1859,8 @@ def build_html(
     视觉基调：电子杂志 × 电子墨水。页面以浅灰纸张为底，正文使用黑色，
     只用荧光绿和黑色做标题、标记与重点强调，避免邮件客户端中的复杂布局。
     ``now`` 保留在接口中以兼容现有调用，但报告标题不展示推送时间。
-    ``review`` 为「前日 A 股复盘」结果；缺省时自动调用 analyze_ashare()（实时采集 → 快照兜底）。
+    ``review`` 为 A 股看盘结果；缺省时自动调用 analyze_ashare()（实时采集 → 快照兜底）。
+    ``hk_review`` / ``us_review`` 为港股、美股看盘结果；缺省时分别调用 analyze_hk() / analyze_us()。
     ``max_items_per_source`` 控制每个数据源卡片展示的最大条数。未指定时：
       - 普通/实名用户（默认）：精选展示前 3 条，单条推送限制在 2 万字以内；
       - PushPlus 会员（PUSHPLUS_MEMBER=1）：展示全量快讯（支持 10 万字推送）。
@@ -1550,58 +1951,77 @@ def build_html(
 
     if review is None:
         review = analyze_ashare()
+    if hk_review is None:
+        hk_review = analyze_hk()
+    if us_review is None:
+        us_review = analyze_us()
 
     def _chip(text: str, color_cls: str = "hl") -> str:
         return f'<span class="{color_cls}">{text}</span>'
 
-    def _hl_ashare(text: str) -> str:
+    def _hl_review(text: str, block: dict) -> str:
         escaped = _esc(text)
-        for item in (review.get("leaders") or []):
+        for item in (block.get("leaders") or []):
             tag = _esc(item["name"])
             escaped = escaped.replace(tag, _chip(tag, "hl"))
-        for item in (review.get("laggards") or []):
+        for item in (block.get("laggards") or []):
             tag = _esc(item["name"])
             escaped = escaped.replace(tag, _chip(tag, "hl-d"))
         return escaped
 
-    bias_cls = "tag" if review["bias"] == "偏多" else ("tag-d" if review["bias"] == "偏空" else "tag-w")
-    bias_pill = f'<span class="{bias_cls}">{_esc(review["bias"])}</span>'
+    def _source_label(block: dict) -> str:
+        return {
+            "eastmoney": "东方财富行情接口",
+            "tencent": "腾讯证券行情接口（备用）",
+        }.get(block.get("source"), "内置真实快照")
 
-    index_cells = []
-    for cell_index, index in enumerate(review.get("indices") or []):
-        pct = index.get("pct") or 0
-        arrow = "↑" if pct > 0 else ("↓" if pct < 0 else "·")
-        cls_pct = "up" if pct >= 0 else "dn"
-        border = "bdr-l" if cell_index else ""
-        index_cells.append(
-            f'<td class="idx-cell {border}">'
-            f'<div class="idx-n">{_esc(index["name"])}</div>'
-            f'<div class="idx-p {cls_pct}">{arrow}{pct:+.2f}%</div>'
-            f'<div class="idx-c">{index["close"]:.2f}</div></td>'
+    def _market_block(block: dict, market_name: str, first: bool = False) -> str:
+        bias = block.get("bias") or "中性"
+        bias_cls = "tag" if bias == "偏多" else ("tag-d" if bias == "偏空" else "tag-w")
+        bias_pill = f'<span class="{bias_cls}">{_esc(bias)}</span>'
+        wrap = "" if first else " mkt"
+        n_idx = max(len(block.get("indices") or []), 1)
+        cell_w = f"{100 // n_idx}%"
+        index_cells = []
+        for cell_index, index in enumerate(block.get("indices") or []):
+            pct = index.get("pct") or 0
+            arrow = "↑" if pct > 0 else ("↓" if pct < 0 else "·")
+            cls_pct = "up" if pct >= 0 else "dn"
+            border = "bdr-l" if cell_index else ""
+            index_cells.append(
+                f'<td class="idx-cell {border}" style="width:{cell_w};">'
+                f'<div class="idx-n">{_esc(index["name"])}</div>'
+                f'<div class="idx-p {cls_pct}">{arrow}{pct:+.2f}%</div>'
+                f'<div class="idx-c">{index["close"]:.2f}</div></td>'
+            )
+        index_strip = f'<table class="tbl-idx"><tr>{"".join(index_cells)}</tr></table>' if index_cells else ""
+        review_rows = []
+        for point_index, point in enumerate(block.get("points") or [], 1):
+            text = _esc(point["text"])
+            if point["key"] in ("sectors", "funds", "outlook"):
+                text = _hl_review(point["text"], block)
+            review_rows.append(
+                f'<tr><td class="td-n">{point_index:02d}</td>'
+                f'<td class="td-p"><span class="tag">{_esc(point["label"])}</span> {text}</td></tr>'
+            )
+        review_rows_html = f'<table class="tbl-sub">' + "".join(review_rows) + "</table>"
+        return (
+            f'<div class="mkt-block{wrap}">'
+            f'<div class="mkt-h"><span class="tag">{_esc(market_name)}</span> {bias_pill} '
+            f'<span class="sub">{_esc(block.get("date") or "")}</span></div>'
+            f'<div class="txt">{_hl_review(block.get("headline") or "", block)}</div>'
+            f'{index_strip}{review_rows_html}</div>'
         )
-    index_strip = f'<table class="tbl-idx"><tr>{"".join(index_cells)}</tr></table>' if index_cells else ""
 
-    review_rows = []
-    for point_index, point in enumerate(review.get("points") or [], 1):
-        text = _esc(point["text"])
-        if point["key"] in ("sectors", "funds", "outlook"):
-            text = _hl_ashare(point["text"])
-        review_rows.append(
-            f'<tr><td class="td-n">{point_index:02d}</td>'
-            f'<td class="td-p"><span class="tag">{_esc(point["label"])}</span> {text}</td></tr>'
-        )
-    review_rows_html = f'<table class="tbl-sub">' + "".join(review_rows) + "</table>"
-
-    source_label = {
-        "eastmoney": "东方财富行情接口",
-        "tencent": "腾讯证券行情接口（备用）",
-    }.get(review.get("source"), "内置真实快照")
-    ashare_card = (
-        f'<div class="card"><div class="hdr"><span class="tag">AI 研判</span>'
-        f'<div>{bias_pill} <span class="sub">{_esc(review.get("date") or "")}</span></div></div>'
-        f'<div class="txt">{_hl_ashare(review.get("headline") or "")}</div>'
-        f'{index_strip}{review_rows_html}'
-        f'<div class="ftr">行情数据：{_esc(source_label)} · {_esc(review.get("date") or "")}</div></div>'
+    kanpan_card = (
+        f'<div class="card"><div class="hdr"><span class="tag">AI 看盘</span>'
+        f'<span class="sub">A股 · 港股 · 美股</span></div>'
+        f'{_market_block(review, "A 股", first=True)}'
+        f'{_market_block(hk_review, "港股")}'
+        f'{_market_block(us_review, "美股")}'
+        f'<div class="ftr">行情数据：A股 {_esc(_source_label(review))} · '
+        f'港股 {_esc(_source_label(hk_review))} · '
+        f'美股 {_esc(_source_label(us_review))}</div></div>'
     )
 
     intro = (
@@ -1642,6 +2062,8 @@ def build_html(
         f'.idx-c{{color:#fff;font-size:10px;}}'
         f'.up{{color:{neon_green};}}.dn{{color:{danger_hi};}}'
         f'.bdr-l{{border-left:1px solid #3d463b;}}'
+        f'.mkt{{margin-top:8px;padding-top:6px;border-top:1px dashed {rule};}}'
+        f'.mkt-h{{margin:2px 0 4px;}}'
         f'</style>'
     )
 
@@ -1677,7 +2099,7 @@ def build_html(
             f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内境外数据，由多个大模型混合部署。覆盖 {len(SOURCE_META)} 个数据源。</div></div>'
             f'<div class="card"><div class="hdr"><span class="tag">AI 每日总结</span></div><div class="txt">{headline}</div>{points_html}</div>'
             + opportunities_card
-            + ashare_card
+            + kanpan_card
             + f'<div class="card" style="background:{black};padding:8px;"><table width="100%"><tr>'
               f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;">{len(SOURCE_META)}<br><span style="color:#fff;font-size:10px;">数据源</span></td>'
               f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;border-left:1px solid #3d463b;border-right:1px solid #3d463b;">{total}<br><span style="color:#fff;font-size:10px;">条快讯</span></td>'

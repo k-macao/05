@@ -357,12 +357,28 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
   border: 1px solid var(--black);
 }
 
-/* A 股复盘卡：六维度内容策略（三大指数/成交额/涨跌家数/板块/资金/后市） */
+/* AI 看盘卡：A 股 / 港股 / 美股 六维度内容策略 */
 .review-card {
   padding: 13px 14px 12px;
   background: var(--paper);
   border: 1px solid var(--black);
   border-top: 4px solid var(--green);
+}
+
+.review-market + .review-market {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--rule);
+}
+
+.review-market-name {
+  padding: 2px 6px;
+  background: var(--black);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  white-space: nowrap;
 }
 
 .review-head {
