@@ -319,6 +319,15 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertIn("&lt;b&gt;", out)
         self.assertNotIn("<b>x</b>", out)
 
+    def test_build_html_length_under_pushplus_limit(self):
+        # 即使每个源都有大量长标题快讯，生成 HTML 依然严格控制在 19,500 字以内（符合 PushPlus 2万字限制）
+        huge_brief = {
+            name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/test"} for _ in range(20)]
+            for name in sources.SOURCES
+        }
+        out = sources.build_html(huge_brief)
+        self.assertLessEqual(len(out), 19500)
+
 
 class AshareReviewTest(unittest.TestCase):
     """最新 A 股六维度复盘：内容策略、数据解析、复盘日选取、离线兜底与 HTML 渲染。"""

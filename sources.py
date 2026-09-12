@@ -1442,13 +1442,15 @@ def _trunc(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def build_html(brief: dict, now: datetime | None = None, review: dict | None = None) -> str:
+def build_html(brief: dict, now: datetime | None = None, review: dict | None = None, max_items_per_source: int | None = 3) -> str:
     """生成适合微信阅读的竖版长图文简报（内联样式，兼容 PushPlus HTML 模板）。
 
     视觉基调：电子杂志 × 电子墨水。页面以浅灰纸张为底，正文使用黑色，
     只用荧光绿和黑色做标题、标记与重点强调，避免邮件客户端中的复杂布局。
     ``now`` 保留在接口中以兼容现有调用，但报告标题不展示推送时间。
     ``review`` 为「前日 A 股复盘」结果；缺省时自动调用 analyze_ashare()（实时采集 → 快照兜底）。
+    ``max_items_per_source`` 控制每个数据源卡片展示的最大条数（默认 3 条），
+    兼顾全源精选覆盖与 PushPlus 的 2 万字单条消息限制。
     """
     # E-ink editorial palette: paper first, ink second, green only for emphasis.
     neon_green = "#b7ff00"
@@ -1458,185 +1460,107 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
     paper_lift = "#f7f8f5"
     muted = "#626a61"
     rule = "#c8cec5"
-    danger = "#c2453b"       # 唯一新增辅助色：仅用于下跌/领跌数值与标记
     danger_hi = "#ff6b5c"    # 黑底上的下跌强调色
-    font = "font-family:Arial,'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;"
     total = sum(len(items or []) for items in brief.values())
 
-    source_cards = []
-    for index, meta in enumerate(SOURCE_META, 1):
-        items = brief.get(meta["name"], []) or []
-        rows = []
-        for item_index, item in enumerate(items, 1):
-            title = _trunc(str(item.get("title", "")), 100)
-            url = item.get("url") or ""
-            title_html = (
-                f'<a href="{_esc(url)}" style="color:{ink};text-decoration:underline;text-decoration-color:{neon_green};text-decoration-thickness:2px;">{title}</a>'
-                if url else title
-            )
-            border = f'border-bottom:1px solid {rule};' if item_index < len(items) else ""
-            rows.append(
-                "<tr>"
-                f'<td width="22" valign="top" style="width:22px;padding:8px 7px 8px 0;{border}color:{muted};font-size:11px;line-height:1.6;{font}">{item_index:02d}</td>'
-                f'<td valign="top" style="padding:8px 0;{border}color:{ink};font-size:13px;line-height:1.65;word-break:break-all;{font}">{title_html}</td>'
-                "</tr>"
-            )
-        if not rows:
-            rows.append(
-                f'<tr><td style="padding:8px 0;color:{muted};font-size:11px;{font}">暂未抓取到内容</td></tr>'
-            )
-        source_cards.append(
-            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-            f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
-            f'<tr><td style="padding:10px 11px 3px;">'
-            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-            f'<td style="color:{neon_green};background:{black};padding:3px 5px;font-size:12px;font-weight:700;line-height:1.4;word-break:break-all;{font}">{index:02d} · {_esc(meta["name"])}</td>'
-            f'<td align="right" valign="top" style="padding-left:8px;white-space:nowrap;color:{ink};font-size:11px;line-height:1.8;{font}">{len(items)} 条</td>'
-            f'</tr></table>'
-            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">{"".join(rows)}</table>'
-            f'</td></tr></table>'
-        )
-
-    # 开篇 AI 总结：由 analyze_brief() 依据真实抓取结果动态生成，不再硬编码。
     analysis = analyze_brief(brief)
-    # 需要荧光绿高亮的板块名：热度主线 + 利好/利差板块 + 板块机会/承压板块（去重保序）。
     hl_tags = list(dict.fromkeys(
         analysis["sectors"] + analysis["sectors_up"] + analysis["sectors_down"]
         + [entry["tag"] for entry in analysis["opportunity_sectors"]]
     ))
 
     def _hl(escaped_text: str) -> str:
-        """在已转义文本中给板块名套上黑底荧光绿高亮。"""
         for tag in hl_tags:
             tag_esc = _esc(tag)
-            escaped_text = escaped_text.replace(
-                tag_esc,
-                f'<span style="color:{neon_green};background:{black};padding:1px 3px;font-weight:700;">{tag_esc}</span>',
-            )
+            escaped_text = escaped_text.replace(tag_esc, f'<span class="hl">{tag_esc}</span>')
         return escaped_text
 
     headline = _hl(_esc(analysis["headline"]))
 
-    # 四个观点：市场情绪 / 多空博弈概率 / 利好·利差板块 / 资金流向分析。
     point_rows = []
     for point_index, point in enumerate(analysis["points"], 1):
         text = _esc(point["text"])
         if point["key"] in ("sectors", "flow"):
             text = _hl(text)
         point_rows.append(
-            f'<tr><td width="24" valign="top" style="width:24px;padding:7px 6px 1px 0;color:{muted};font-size:11px;line-height:1.6;{font}">{point_index:02d}</td>'
-            f'<td style="padding:7px 0 1px;color:{ink};font-size:12px;line-height:1.75;word-break:break-all;{font}">'
-            f'<span style="color:{neon_green};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{_esc(point["label"])}</span>'
-            f' {text}</td></tr>'
+            f'<tr><td class="td-n">{point_index:02d}</td>'
+            f'<td class="td-p"><span class="tag">{_esc(point["label"])}</span> {text}</td></tr>'
         )
-    points_html = (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="width:100%;margin:10px 0 0;border-top:1px dashed {rule};">'
-        + "".join(point_rows)
-        + "</table>"
-    )
-
-    # 「AI 板块机会」板块：机会方向（净多头板块按 信号强度 × 跨源热度 排序，附支撑证据）
-    # + 承压方向（净空头板块）。与「AI 每日总结」共用同一套多空信号统计。
-    def _group_label(color: str, text: str, note: str) -> str:
-        return (
-            f'<tr><td colspan="2" style="padding:9px 0 1px;">'
-            f'<span style="color:{color};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{text}</span> '
-            f'<span style="color:{muted};font-size:10px;line-height:1.5;">{note}</span></td></tr>'
-        )
+    points_html = f'<table class="tbl-sub">' + "".join(point_rows) + "</table>"
 
     def _opp_row(rank: int, entry: dict, is_pressure: bool) -> str:
         tag = _esc(entry["tag"])
-        accent = danger_hi if is_pressure else neon_green
+        tag_cls = "tag-d" if is_pressure else "tag"
         net_text = f"净空 {-entry['net']}" if is_pressure else f"净多 {entry['net']}"
         head = (
-            f'<div style="margin:0;line-height:1.6;word-break:break-all;">'
-            f'<span style="color:{accent};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{tag}</span> '
-            f'<span style="color:{accent};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{net_text}</span> '
-            f'<span style="color:{muted};font-size:10px;line-height:1.5;">{entry["sources"]} 源命中 · {entry["mentions"]} 条提及</span></div>'
+            f'<div><span class="{tag_cls}">{tag}</span> '
+            f'<span class="{tag_cls}">{net_text}</span> '
+            f'<span class="sub">{entry["sources"]} 源命中 · {entry["mentions"]} 条提及</span></div>'
         )
         evidence_rows = []
         for ev in entry["evidence"]:
             evidence_rows.append(
-                f'<div style="margin:2px 0 0 16px;color:{muted};font-size:11px;line-height:1.65;word-break:break-all;{font}">'
-                f'· <span style="color:{ink};">{_esc(ev.get("source") or "")}</span>｜{_hl(_trunc(str(ev.get("title") or ""), 56))}</div>'
+                f'<div class="ev">· {_esc(ev.get("source") or "")}｜{_hl(_trunc(str(ev.get("title") or ""), 50))}</div>'
             )
         return (
-            f'<tr>'
-            f'<td width="24" valign="top" style="width:24px;padding:7px 6px 7px 0;color:{muted};font-size:11px;line-height:1.6;{font}">{rank:02d}</td>'
-            f'<td valign="top" style="padding:7px 0;color:{ink};font-size:12px;line-height:1.75;word-break:break-all;{font}">{head}{"".join(evidence_rows)}</td>'
-            f'</tr>'
+            f'<tr><td class="td-n">{rank:02d}</td>'
+            f'<td class="td-t">{head}{"".join(evidence_rows)}</td></tr>'
         )
 
     opportunity_sectors = analysis["opportunity_sectors"]
     pressure_sectors = analysis["pressure_sectors"]
-    opp_rows = [_group_label(neon_green, "机会方向", "净多头信号板块 · 按信号强度 × 跨源热度排序")]
+    opp_rows = [f'<tr><td colspan="2" class="td-hdr"><span class="tag">机会方向</span> <span class="sub">净多头信号板块 · 按信号强度 × 跨源热度排序</span></td></tr>']
     for rank, entry in enumerate(opportunity_sectors, 1):
         opp_rows.append(_opp_row(rank, entry, False))
     if not opportunity_sectors:
         opp_rows.append(
-            f'<tr><td colspan="2" style="padding:6px 0;color:{muted};font-size:11px;line-height:1.65;{font}">'
+            f'<tr><td colspan="2" class="sub" style="padding:6px 0;">'
             f'今日样本中暂无净多头信号占优的板块，等待新数据。</td></tr>'
         )
     if pressure_sectors:
-        opp_rows.append(_group_label(danger_hi, "承压方向", "净空头信号板块 · 资金回避方向"))
+        opp_rows.append(f'<tr><td colspan="2" class="td-hdr"><span class="tag-d">承压方向</span> <span class="sub">净空头信号板块 · 资金回避方向</span></td></tr>')
         for rank, entry in enumerate(pressure_sectors, 1):
             opp_rows.append(_opp_row(rank, entry, True))
+
     opportunities_card = (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
-        f'<tr><td style="padding:11px 12px 10px;">'
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        f'<td style="color:{neon_green};background:{black};padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 板块机会</td>'
-        f'<td align="right" valign="middle" style="white-space:nowrap;color:{muted};font-size:10px;{font}">基于 {analysis["signals"]} 条多空信号</td>'
-        f'</tr></table>'
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:2px 0 0;">{"".join(opp_rows)}</table>'
-        f'</td></tr></table>'
+        f'<div class="card"><div class="hdr">'
+        f'<span class="tag">AI 板块机会</span>'
+        f'<span class="sub">基于 {analysis["signals"]} 条多空信号</span></div>'
+        f'<table class="tbl">{"".join(opp_rows)}</table></div>'
     )
 
-    # 最新 A 股复盘（六维度内容策略）：标题条 + AI 一句话 + 指数条 + 六个观点行 + 数据来源。
     if review is None:
         review = analyze_ashare()
 
-    def _chip(text: str, color: str = neon_green) -> str:
-        # 入参必须是已转义文本，这里不再重复转义。
-        return (f'<span style="color:{color};background:{black};padding:1px 3px;'
-                f'font-weight:700;">{text}</span>')
+    def _chip(text: str, color_cls: str = "hl") -> str:
+        return f'<span class="{color_cls}">{text}</span>'
 
     def _hl_ashare(text: str) -> str:
-        """复盘文本板块标记：领涨/流入 → 荧光绿，领跌/回避 → 砖红（先转义再替换）。"""
         escaped = _esc(text)
         for item in (review.get("leaders") or []):
             tag = _esc(item["name"])
-            escaped = escaped.replace(tag, _chip(tag, neon_green))
+            escaped = escaped.replace(tag, _chip(tag, "hl"))
         for item in (review.get("laggards") or []):
             tag = _esc(item["name"])
-            escaped = escaped.replace(tag, _chip(tag, danger_hi))
+            escaped = escaped.replace(tag, _chip(tag, "hl-d"))
         return escaped
 
-    bias_color = neon_green if review["bias"] == "偏多" else (danger_hi if review["bias"] == "偏空" else "#ffffff")
-    bias_pill = (
-        f'<span style="color:{bias_color};background:{black};padding:2px 6px;'
-        f'font-size:10px;font-weight:700;{font}">{_esc(review["bias"])}</span>'
-    )
+    bias_cls = "tag" if review["bias"] == "偏多" else ("tag-d" if review["bias"] == "偏空" else "tag-w")
+    bias_pill = f'<span class="{bias_cls}">{_esc(review["bias"])}</span>'
 
     index_cells = []
     for cell_index, index in enumerate(review.get("indices") or []):
         pct = index.get("pct") or 0
-        color = neon_green if pct >= 0 else danger_hi
         arrow = "↑" if pct > 0 else ("↓" if pct < 0 else "·")
-        border = "border-left:1px solid #3d463b;" if cell_index else ""
+        cls_pct = "up" if pct >= 0 else "dn"
+        border = "bdr-l" if cell_index else ""
         index_cells.append(
-            f'<td align="center" style="width:25%;padding:8px 2px;{border}">'
-            f'<div style="color:#9aa396;font-size:10px;line-height:1.5;{font}">{_esc(index["name"])}</div>'
-            f'<div style="color:{color};font-size:14px;font-weight:700;line-height:1.4;{font}">{arrow}{pct:+.2f}%</div>'
-            f'<div style="color:#ffffff;font-size:10px;line-height:1.5;{font}">{index["close"]:.2f}</div>'
-            f'</td>'
+            f'<td class="idx-cell {border}">'
+            f'<div class="idx-n">{_esc(index["name"])}</div>'
+            f'<div class="idx-p {cls_pct}">{arrow}{pct:+.2f}%</div>'
+            f'<div class="idx-c">{index["close"]:.2f}</div></td>'
         )
-    index_strip = (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="width:100%;margin:9px 0 0;background:{black};"><tr>{"".join(index_cells)}</tr></table>'
-    ) if index_cells else ""
+    index_strip = f'<table class="tbl-idx"><tr>{"".join(index_cells)}</tr></table>' if index_cells else ""
 
     review_rows = []
     for point_index, point in enumerate(review.get("points") or [], 1):
@@ -1644,35 +1568,21 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         if point["key"] in ("sectors", "funds", "outlook"):
             text = _hl_ashare(point["text"])
         review_rows.append(
-            f'<tr><td width="24" valign="top" style="width:24px;padding:7px 6px 1px 0;color:{muted};font-size:11px;line-height:1.6;{font}">{point_index:02d}</td>'
-            f'<td style="padding:7px 0 1px;color:{ink};font-size:12px;line-height:1.75;word-break:break-all;{font}">'
-            f'<span style="color:{neon_green};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{_esc(point["label"])}</span>'
-            f' {text}</td></tr>'
+            f'<tr><td class="td-n">{point_index:02d}</td>'
+            f'<td class="td-p"><span class="tag">{_esc(point["label"])}</span> {text}</td></tr>'
         )
-    review_rows_html = (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="width:100%;margin:10px 0 0;border-top:1px dashed {rule};">'
-        + "".join(review_rows)
-        + "</table>"
-    )
+    review_rows_html = f'<table class="tbl-sub">' + "".join(review_rows) + "</table>"
 
     source_label = {
         "eastmoney": "东方财富行情接口",
         "tencent": "腾讯证券行情接口（备用）",
     }.get(review.get("source"), "内置真实快照")
     ashare_card = (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
-        f'<tr><td style="padding:11px 12px 12px;">'
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        f'<td style="color:{neon_green};background:{black};padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 研判</td>'
-        f'<td align="right" valign="middle" style="white-space:nowrap;">{bias_pill} <span style="color:{muted};font-size:10px;{font}">{_esc(review.get("date") or "")}</span></td>'
-        f'</tr></table>'
-        f'<div style="margin:8px 0 0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{_hl_ashare(review.get("headline") or "")}</div>'
-        f'{index_strip}'
-        f'{review_rows_html}'
-        f'<div style="margin:8px 0 0;padding-top:6px;border-top:1px dashed {rule};color:{muted};font-size:10px;line-height:1.5;{font}">行情数据：{_esc(source_label)} · {_esc(review.get("date") or "")}</div>'
-        f'</td></tr></table>'
+        f'<div class="card"><div class="hdr"><span class="tag">AI 研判</span>'
+        f'<div>{bias_pill} <span class="sub">{_esc(review.get("date") or "")}</span></div></div>'
+        f'<div class="txt">{_hl_ashare(review.get("headline") or "")}</div>'
+        f'{index_strip}{review_rows_html}'
+        f'<div class="ftr">行情数据：{_esc(source_label)} · {_esc(review.get("date") or "")}</div></div>'
     )
 
     intro = (
@@ -1683,47 +1593,92 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
     )
     author = "作者：章鱼 ai　　仅供参考，分析研究"
 
-    return (
-        f'<div style="width:100%;max-width:100%;margin:0;padding:12px 10px 20px;box-sizing:border-box;background:{paper};color:{ink};{font}word-break:break-word;">'
-        # Editorial masthead: deliberately no PushPlus label and no timestamp.
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{black};border-left:6px solid {neon_green};">'
-        f'<tr><td style="padding:14px 13px 13px;">'
-        f'<div style="margin:0 0 7px;color:{neon_green};font-size:10px;line-height:1.4;letter-spacing:1.5px;{font}">全网 AI 调研　/　境内 × 境外</div>'
-        f'<div style="margin:0;color:{neon_green};font-size:23px;font-weight:800;line-height:1.25;letter-spacing:-.5px;{font}">章鱼 AI 全景分析</div>'
-        f'<div style="margin:7px 0 0;color:#fff;font-size:12px;line-height:1.55;{font}">全网 AI 调研境内境外数据，由多个大模型混合部署。覆盖 {len(SOURCE_META)} 个数据源。</div>'
-        f'</td></tr></table>'
-
-        # One-line insight plus the four AI viewpoints, green-on-black highlights.
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
-        f'<tr><td style="padding:11px 12px 12px;">'
-        f'<div style="margin:0 0 6px;color:{neon_green};background:{black};display:inline-block;padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 每日总结</div>'
-        f'<div style="margin:0;color:{ink};font-size:14px;line-height:1.75;word-break:break-all;{font}">{headline}</div>'
-        f'{points_html}'
-        f'</td></tr></table>'
-
-        # 板块机会清单：紧跟「AI 每日总结」的观点 3/4（利好·利差板块、资金流向），给出逐板块证据。
-        + opportunities_card
-
-        # 最新 A 股六维度复盘：紧随板块机会，同属「开头 AI 部分」。
-        + ashare_card
-
-        # Compact report counters.
-        + f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{black};border:1px solid {black};">'
-        f'<tr>'
-        f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;{font}">{len(SOURCE_META)}<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">数据源</span></td>'
-        f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;border-left:1px solid #3d463b;border-right:1px solid #3d463b;{font}">{total}<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">条快讯</span></td>'
-        f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;{font}">18<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">境内外视野</span></td>'
-        f'</tr></table>'
-
-        + "".join(source_cards)
-
-        # Method note now sits at the very end of the page, after all source streams.
-        + f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:10px 0 0;background:{paper_lift};border-left:4px solid {black};">'
-        f'<tr><td style="padding:10px 12px;color:{ink};font-size:12px;line-height:1.7;{font}"><span style="color:{neon_green};background:{black};padding:2px 4px;font-size:10px;">调研方法</span><br>{_esc(intro)}</td></tr></table>'
-        + f'<div style="margin:10px 0 0;color:{muted};font-size:10px;line-height:1.5;text-align:center;{font}">数据仅供参考，不构成投资建议</div>'
-        + f'<div style="margin:8px 0 0;padding:10px 4px 0;border-top:1px solid {black};color:{black};font-size:11px;line-height:1.6;text-align:center;font-weight:700;{font}">{_esc(author)}</div>'
-        + '</div>'
+    css = (
+        f'<style>body,td,div,span,a{{font-family:Arial,\'PingFang SC\',\'Microsoft YaHei\',\'Noto Sans SC\',sans-serif;box-sizing:border-box;}}'
+        f'.bg{{width:100%;max-width:100%;margin:0;padding:10px;background:{paper};color:{ink};word-break:break-word;}}'
+        f'.card{{margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};padding:8px 10px 6px;}}'
+        f'.card-m{{margin:0 0 10px;background:{black};border-left:5px solid {neon_green};padding:12px 11px;color:#fff;}}'
+        f'.hdr{{display:flex;justify-content:space-between;align-items:center;}}'
+        f'.tag{{color:{neon_green};background:{black};padding:2px 5px;font-size:10px;font-weight:700;}}'
+        f'.tag-d{{color:{danger_hi};background:{black};padding:2px 5px;font-size:10px;font-weight:700;}}'
+        f'.tag-w{{color:#fff;background:{black};padding:2px 5px;font-size:10px;font-weight:700;}}'
+        f'.sub{{color:{muted};font-size:10px;}}'
+        f'.tbl{{width:100%;border-collapse:collapse;margin-top:2px;}}'
+        f'.tbl-sub{{width:100%;border-collapse:collapse;margin-top:6px;border-top:1px dashed {rule};}}'
+        f'.tbl-idx{{width:100%;border-collapse:collapse;margin-top:6px;background:{black};}}'
+        f'.td-n{{width:22px;vertical-align:top;padding:4px 4px 4px 0;color:{muted};font-size:11px;}}'
+        f'.td-t{{vertical-align:top;padding:4px 0;color:{ink};font-size:12px;line-height:1.5;word-break:break-all;}}'
+        f'.td-p{{padding:4px 0 1px;color:{ink};font-size:12px;line-height:1.5;word-break:break-all;}}'
+        f'.td-hdr{{padding:6px 0 1px;}}'
+        f'.td-bdr{{border-bottom:1px solid {rule};}}'
+        f'.ev{{margin:2px 0 0 12px;color:{muted};font-size:11px;word-break:break-all;}}'
+        f'.lnk{{color:{ink};text-decoration:underline;text-decoration-color:{neon_green};}}'
+        f'.hl{{color:{neon_green};background:{black};padding:1px 3px;font-weight:700;}}'
+        f'.hl-d{{color:{danger_hi};background:{black};padding:1px 3px;font-weight:700;}}'
+        f'.txt{{margin-top:4px;color:{ink};font-size:13px;line-height:1.5;word-break:break-all;}}'
+        f'.ftr{{margin-top:6px;padding-top:4px;border-top:1px dashed {rule};color:{muted};font-size:10px;}}'
+        f'.idx-cell{{text-align:center;width:25%;padding:5px 2px;}}'
+        f'.idx-n{{color:#9aa396;font-size:10px;}}'
+        f'.idx-p{{font-size:13px;font-weight:700;}}'
+        f'.idx-c{{color:#fff;font-size:10px;}}'
+        f'.up{{color:{neon_green};}}.dn{{color:{danger_hi};}}'
+        f'.bdr-l{{border-left:1px solid #3d463b;}}'
+        f'</style>'
     )
+
+    def _render_full(max_per_src: int | None) -> str:
+        source_cards = []
+        for index, meta in enumerate(SOURCE_META, 1):
+            raw_items = brief.get(meta["name"], []) or []
+            items = raw_items[:max_per_src] if max_per_src is not None else raw_items
+            rows = []
+            for item_index, item in enumerate(items, 1):
+                title = _trunc(str(item.get("title", "")), 75)
+                url = item.get("url") or ""
+                title_html = f'<a href="{_esc(url)}" class="lnk">{title}</a>' if url else title
+                bdr = 'class="td-bdr"' if item_index < len(items) else ''
+                rows.append(
+                    f'<tr><td class="td-n {bdr}">{item_index:02d}</td>'
+                    f'<td class="td-t {bdr}">{title_html}</td></tr>'
+                )
+            if not rows:
+                rows.append(f'<tr><td colspan="2" class="sub">暂未抓取到内容</td></tr>')
+            source_cards.append(
+                f'<div class="card"><div class="hdr">'
+                f'<span class="tag">{index:02d} · {_esc(meta["name"])}</span>'
+                f'<span class="sub">{len(raw_items)} 条</span></div>'
+                f'<table class="tbl">{"".join(rows)}</table></div>'
+            )
+
+        return (
+            f'{css}<div class="bg">'
+            f'<div class="card-m">'
+            f'<div style="color:{neon_green};font-size:10px;margin-bottom:3px;">全网 AI 调研　/　境内 × 境外</div>'
+            f'<div style="color:{neon_green};font-size:20px;font-weight:800;">章鱼 AI 全景分析</div>'
+            f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内境外数据，由多个大模型混合部署。覆盖 {len(SOURCE_META)} 个数据源。</div></div>'
+            f'<div class="card"><div class="hdr"><span class="tag">AI 每日总结</span></div><div class="txt">{headline}</div>{points_html}</div>'
+            + opportunities_card
+            + ashare_card
+            + f'<div class="card" style="background:{black};padding:8px;"><table width="100%"><tr>'
+              f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;">{len(SOURCE_META)}<br><span style="color:#fff;font-size:10px;">数据源</span></td>'
+              f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;border-left:1px solid #3d463b;border-right:1px solid #3d463b;">{total}<br><span style="color:#fff;font-size:10px;">条快讯</span></td>'
+              f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;">18<br><span style="color:#fff;font-size:10px;">境内外视野</span></td>'
+              f'</tr></table></div>'
+            + "".join(source_cards)
+            + f'<div class="card" style="border-left:4px solid {black};"><span class="tag">调研方法</span><br><span class="sub" style="color:{ink};font-size:11px;">{_esc(intro)}</span></div>'
+            + f'<div style="margin:8px 0 0;color:{muted};font-size:10px;text-align:center;">数据仅供参考，不构成投资建议</div>'
+            + f'<div style="margin:6px 0 0;padding:6px 4px 0;border-top:1px solid {black};color:{black};font-size:10px;text-align:center;font-weight:700;">{_esc(author)}</div>'
+            + '</div>'
+        )
+
+    out = _render_full(max_items_per_source)
+    if len(out) > 19500:
+        for limit in (3, 2, 1):
+            out = _render_full(limit)
+            if len(out) <= 19500:
+                break
+
+    return out
 
 if __name__ == "__main__":
     print(f"开始抓取 {len(SOURCES)} 个数据源…")

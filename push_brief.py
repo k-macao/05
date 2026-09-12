@@ -41,8 +41,9 @@ PUSHPLUS_ERROR_HINTS = {
     905: "账户未完成实名认证：到 pushplus.plus 完成实名认证后即可发送",
     999: (
         "服务端验证错误（具体原因在完整返回内容里，见上一行）。常见原因："
-        "① 账号实名认证过期，需重新认证；"
-        "② token 已失效，重新登录 www.pushplus.plus 复制最新 token"
+        "① 推送内容过大（普通/实名用户限制单条 2 万字以内）；"
+        "② 账号实名认证过期，需重新认证；"
+        "③ token 已失效，重新登录 www.pushplus.plus 复制最新 token"
     ),
 }
 
@@ -129,10 +130,16 @@ def main():
 
     if result.get("code") != 200:
         code = result.get("code")
+        data_detail = result.get("data")
         print(f"错误：PushPlus 拒绝：code={code}, msg={result.get('msg', '')}", flush=True)
         # 官方文档：code=999 等错误需「具体查看返回内容」，打印完整返回体定位根因。
         print(f"诊断：PushPlus 完整返回={json.dumps(result, ensure_ascii=False)}", flush=True)
-        hint = PUSHPLUS_ERROR_HINTS.get(code)
+        if data_detail and any(kw in str(data_detail) for kw in ("过大", "超长", "限制", "大小")):
+            hint = f"推送内容超过 PushPlus 限制（{data_detail}），请控制推送 HTML 长度在 2 万字以内"
+        else:
+            hint = PUSHPLUS_ERROR_HINTS.get(code)
+            if hint and data_detail and str(data_detail) not in hint:
+                hint += f"｜服务端返回：{data_detail}"
         if hint:
             print(f"排查建议：{hint}", flush=True)
         return 2
