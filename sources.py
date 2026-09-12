@@ -1612,11 +1612,11 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         f'<td align="center" style="width:33.33%;padding:9px 4px;color:{neon_green};font-size:18px;font-weight:700;line-height:1.25;{font}">18<br><span style="color:#fff;font-size:10px;font-weight:400;{font}">境内外视野</span></td>'
         f'</tr></table>'
 
-        # Method note comes before the source stream; the author remains the very last line.
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 10px;background:{paper_lift};border-left:4px solid {black};">'
-        f'<tr><td style="padding:10px 12px;color:{ink};font-size:12px;line-height:1.7;{font}"><span style="color:{neon_green};background:{black};padding:2px 4px;font-size:10px;">调研方法</span><br>{_esc(intro)}</td></tr></table>'
-
         + "".join(source_cards)
+
+        # Method note now sits at the very end of the page, after all source streams.
+        + f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:10px 0 0;background:{paper_lift};border-left:4px solid {black};">'
+        f'<tr><td style="padding:10px 12px;color:{ink};font-size:12px;line-height:1.7;{font}"><span style="color:{neon_green};background:{black};padding:2px 4px;font-size:10px;">调研方法</span><br>{_esc(intro)}</td></tr></table>'
         + f'<div style="margin:10px 0 0;color:{muted};font-size:10px;line-height:1.5;text-align:center;{font}">数据仅供参考，不构成投资建议</div>'
         + f'<div style="margin:8px 0 0;padding:10px 4px 0;border-top:1px solid {black};color:{black};font-size:11px;line-height:1.6;text-align:center;font-weight:700;{font}">{_esc(author)}</div>'
         + '</div>'
