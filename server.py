@@ -149,8 +149,14 @@ class Handler(SimpleHTTPRequestHandler):
                 # 官方文档：code=999 等错误需「具体查看返回内容」，把完整返回体与排查建议一并透出。
                 from push_brief import PUSHPLUS_ERROR_HINTS
                 code = result.get("code")
+                data_detail = result.get("data")
                 message = f"PushPlus 拒绝（code={code}）：{result.get('msg', '')}"
-                hint = PUSHPLUS_ERROR_HINTS.get(code)
+                if data_detail and any(kw in str(data_detail) for kw in ("过大", "超长", "限制", "大小")):
+                    hint = f"推送内容超过 PushPlus 限制（{data_detail}）。普通用户限制 2 万字，若已是会员请配置 PUSHPLUS_MEMBER=1 解锁 10 万字推送"
+                else:
+                    hint = PUSHPLUS_ERROR_HINTS.get(code)
+                    if hint and data_detail and str(data_detail) not in hint:
+                        hint += f"｜服务端返回：{data_detail}"
                 if hint:
                     message += f"｜排查建议：{hint}"
                 message += f"｜完整返回：{json.dumps(result, ensure_ascii=False)}"

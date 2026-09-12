@@ -41,8 +41,9 @@ PUSHPLUS_ERROR_HINTS = {
     905: "账户未完成实名认证：到 pushplus.plus 完成实名认证后即可发送",
     999: (
         "服务端验证错误（具体原因在完整返回内容里，见上一行）。常见原因："
-        "① 账号实名认证过期，需重新认证；"
-        "② token 已失效，重新登录 www.pushplus.plus 复制最新 token"
+        "① 推送内容过大（普通用户限制 2 万字，会员限制 10 万字；会员可设置 PUSHPLUS_MEMBER=1）；"
+        "② 账号实名认证过期，需重新认证；"
+        "③ token 已失效，重新登录 www.pushplus.plus 复制最新 token"
     ),
 }
 
@@ -70,6 +71,10 @@ def main():
     # 诊断：打印 token 长度，帮助排查空白字符问题
     token = token.strip()
     print(f"诊断：PUSHPLUS_TOKEN 长度={len(token)}", flush=True)
+    if sources._is_pushplus_member():
+        print("诊断：PUSHPLUS_MEMBER 已启用，按会员模式推送（上限 10 万字，展示全量快讯）", flush=True)
+    else:
+        print("诊断：当前为普通用户模式（上限 2 万字，精选快讯）；若已开通会员可在 Secrets 中设置 PUSHPLUS_MEMBER=1 解锁 10 万字全量推送", flush=True)
     if TOPIC:
         print(f"诊断：本次为一对多推送（群组编码 topic={TOPIC}）", flush=True)
     else:
@@ -129,10 +134,16 @@ def main():
 
     if result.get("code") != 200:
         code = result.get("code")
+        data_detail = result.get("data")
         print(f"错误：PushPlus 拒绝：code={code}, msg={result.get('msg', '')}", flush=True)
         # 官方文档：code=999 等错误需「具体查看返回内容」，打印完整返回体定位根因。
         print(f"诊断：PushPlus 完整返回={json.dumps(result, ensure_ascii=False)}", flush=True)
-        hint = PUSHPLUS_ERROR_HINTS.get(code)
+        if data_detail and any(kw in str(data_detail) for kw in ("过大", "超长", "限制", "大小")):
+            hint = f"推送内容超过 PushPlus 限制（{data_detail}）。普通用户限制 2 万字，若已是会员请在 Secrets 中配置 PUSHPLUS_MEMBER=1 解锁 10 万字推送"
+        else:
+            hint = PUSHPLUS_ERROR_HINTS.get(code)
+            if hint and data_detail and str(data_detail) not in hint:
+                hint += f"｜服务端返回：{data_detail}"
         if hint:
             print(f"排查建议：{hint}", flush=True)
         return 2
