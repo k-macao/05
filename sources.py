@@ -556,10 +556,14 @@ def analyze_brief(brief: dict) -> dict:
         bias          偏多 / 偏空 / 中性
         bull          多方概率（百分比整数）
         bear          空方概率（百分比整数）
+        signals       参与统计的多空信号总条数（样本量，= 多方 + 空方）
         sectors       热度最高的板块标签列表（最多 2 个）
         top_themes    全部命中主题 [(标签, 跨源数, 提及数)]，按信号强度排序
         sectors_up    利好板块（多头信号占优的主题，最多 3 个）
         sectors_down  利差板块（空头信号占优的主题，最多 2 个，可能为空）
+        opportunity_sectors 「AI 板块机会」机会方向：净多头主题 Top 4，
+                            [{tag, up, down, net, mentions, sources, evidence[{title, source, url}]}]
+        pressure_sectors    「AI 板块机会」承压方向：净空头主题 Top 2，结构同上
         flow          资金流向分析句（纯文本）
         points        开篇四个观点 [{key, label, text}]：
                       1 市场情绪 2 多空博弈概率 3 利好/利差板块 4 资金流向分析
@@ -569,6 +573,8 @@ def analyze_brief(brief: dict) -> dict:
     # 按主题累计多/空信号：只有方向明确的标题才计入对应主题的多空账。
     theme_up = {tag: 0 for tag in theme_sources}
     theme_down = {tag: 0 for tag in theme_sources}
+    # 「AI 板块机会」板块的证据留档：每条命中主题的标题（含方向/来源/链接），供按主题回溯支撑新闻。
+    theme_evidence = {tag: [] for tag in theme_sources}
     bull = bear = 0
 
     for name, items in (brief or {}).items():
@@ -596,6 +602,12 @@ def analyze_brief(brief: dict) -> dict:
                         theme_up[tag] += 1
                     elif direction < 0:
                         theme_down[tag] += 1
+                    theme_evidence[tag].append({
+                        "title": title,
+                        "source": name,
+                        "url": item.get("url") or "",
+                        "direction": direction,
+                    })
 
     ranked = sorted(
         ((tag, len(theme_sources[tag]), theme_mentions[tag]) for tag in theme_sources),
@@ -619,22 +631,48 @@ def analyze_brief(brief: dict) -> dict:
         bull_pct, bear_pct, bias = 50, 50, "中性"
 
     # 利好 / 利差板块：净多头（净空头）信号 > 0 的主题，按信号强度与热度排序。
-    sectors_up = [
-        tag for tag, _, _ in sorted(
-            ((tag, len(theme_sources[tag]), theme_mentions[tag]) for tag in theme_sources
-             if theme_up[tag] > theme_down[tag]),
-            key=lambda entry: (theme_up[entry[0]] - theme_down[entry[0]], entry[1], entry[2]),
-            reverse=True,
-        )[:3]
-    ]
-    sectors_down = [
-        tag for tag, _, _ in sorted(
-            ((tag, len(theme_sources[tag]), theme_mentions[tag]) for tag in theme_sources
-             if theme_down[tag] > theme_up[tag]),
-            key=lambda entry: (theme_down[entry[0]] - theme_up[entry[0]], entry[1], entry[2]),
-            reverse=True,
-        )[:2]
-    ]
+    # 「AI 板块机会」板块复用同一套排序（机会方向取 Top 4，承压方向取 Top 2）。
+    up_ranked = sorted(
+        (tag for tag in theme_sources if theme_up[tag] > theme_down[tag]),
+        key=lambda tag: (theme_up[tag] - theme_down[tag],
+                         len(theme_sources[tag]), theme_mentions[tag]),
+        reverse=True,
+    )
+    down_ranked = sorted(
+        (tag for tag in theme_sources if theme_down[tag] > theme_up[tag]),
+        key=lambda tag: (theme_down[tag] - theme_up[tag],
+                         len(theme_sources[tag]), theme_mentions[tag]),
+        reverse=True,
+    )
+    sectors_up = up_ranked[:3]
+    sectors_down = down_ranked[:2]
+
+    def _sector_entry(tag: str, want_dir: int, evidence_limit: int) -> dict:
+        """板块机会明细：信号统计 + 支撑证据（按「方向相符优先」排序，同源同题去重）。"""
+        evidence, seen = [], set()
+        for ev in sorted(
+            theme_evidence[tag],
+            key=lambda e: 0 if e["direction"] == want_dir else (1 if e["direction"] == 0 else 2),
+        ):  # 稳定排序：同方向内保持抓取顺序
+            key = (ev["source"], ev["title"])
+            if key in seen:
+                continue
+            seen.add(key)
+            evidence.append({"title": ev["title"], "source": ev["source"], "url": ev["url"]})
+            if len(evidence) >= evidence_limit:
+                break
+        return {
+            "tag": tag,
+            "up": theme_up[tag],
+            "down": theme_down[tag],
+            "net": theme_up[tag] - theme_down[tag],
+            "mentions": theme_mentions[tag],
+            "sources": len(theme_sources[tag]),
+            "evidence": evidence,
+        }
+
+    opportunity_sectors = [_sector_entry(tag, 1, 3) for tag in up_ranked[:4]]
+    pressure_sectors = [_sector_entry(tag, -1, 2) for tag in down_ranked[:2]]
 
     headline = _compose_headline(bias, top_themes)
     flow = _compose_flow(sectors_up, sectors_down, top_themes)
@@ -652,10 +690,13 @@ def analyze_brief(brief: dict) -> dict:
         "bias": bias,
         "bull": bull_pct,
         "bear": bear_pct,
+        "signals": bull + bear,
         "sectors": sectors,
         "top_themes": top_themes,
         "sectors_up": sectors_up,
         "sectors_down": sectors_down,
+        "opportunity_sectors": opportunity_sectors,
+        "pressure_sectors": pressure_sectors,
         "flow": flow,
         "points": points,
     }
@@ -1458,9 +1499,10 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
 
     # 开篇 AI 总结：由 analyze_brief() 依据真实抓取结果动态生成，不再硬编码。
     analysis = analyze_brief(brief)
-    # 需要荧光绿高亮的板块名：热度主线 + 利好/利差板块（去重保序）。
+    # 需要荧光绿高亮的板块名：热度主线 + 利好/利差板块 + 板块机会/承压板块（去重保序）。
     hl_tags = list(dict.fromkeys(
         analysis["sectors"] + analysis["sectors_up"] + analysis["sectors_down"]
+        + [entry["tag"] for entry in analysis["opportunity_sectors"]]
     ))
 
     def _hl(escaped_text: str) -> str:
@@ -1492,6 +1534,64 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         f'style="width:100%;margin:10px 0 0;border-top:1px dashed {rule};">'
         + "".join(point_rows)
         + "</table>"
+    )
+
+    # 「AI 板块机会」板块：机会方向（净多头板块按 信号强度 × 跨源热度 排序，附支撑证据）
+    # + 承压方向（净空头板块）。与「AI 每日总结」共用同一套多空信号统计。
+    def _group_label(color: str, text: str, note: str) -> str:
+        return (
+            f'<tr><td colspan="2" style="padding:9px 0 1px;">'
+            f'<span style="color:{color};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{text}</span> '
+            f'<span style="color:{muted};font-size:10px;line-height:1.5;">{note}</span></td></tr>'
+        )
+
+    def _opp_row(rank: int, entry: dict, is_pressure: bool) -> str:
+        tag = _esc(entry["tag"])
+        accent = danger_hi if is_pressure else neon_green
+        net_text = f"净空 {-entry['net']}" if is_pressure else f"净多 {entry['net']}"
+        head = (
+            f'<div style="margin:0;line-height:1.6;word-break:break-all;">'
+            f'<span style="color:{accent};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{tag}</span> '
+            f'<span style="color:{accent};background:{black};padding:1px 4px;font-size:10px;font-weight:700;line-height:1.5;">{net_text}</span> '
+            f'<span style="color:{muted};font-size:10px;line-height:1.5;">{entry["sources"]} 源命中 · {entry["mentions"]} 条提及</span></div>'
+        )
+        evidence_rows = []
+        for ev in entry["evidence"]:
+            evidence_rows.append(
+                f'<div style="margin:2px 0 0 16px;color:{muted};font-size:11px;line-height:1.65;word-break:break-all;{font}">'
+                f'· <span style="color:{ink};">{_esc(ev.get("source") or "")}</span>｜{_hl(_trunc(str(ev.get("title") or ""), 56))}</div>'
+            )
+        return (
+            f'<tr>'
+            f'<td width="24" valign="top" style="width:24px;padding:7px 6px 7px 0;color:{muted};font-size:11px;line-height:1.6;{font}">{rank:02d}</td>'
+            f'<td valign="top" style="padding:7px 0;color:{ink};font-size:12px;line-height:1.75;word-break:break-all;{font}">{head}{"".join(evidence_rows)}</td>'
+            f'</tr>'
+        )
+
+    opportunity_sectors = analysis["opportunity_sectors"]
+    pressure_sectors = analysis["pressure_sectors"]
+    opp_rows = [_group_label(neon_green, "机会方向", "净多头信号板块 · 按信号强度 × 跨源热度排序")]
+    for rank, entry in enumerate(opportunity_sectors, 1):
+        opp_rows.append(_opp_row(rank, entry, False))
+    if not opportunity_sectors:
+        opp_rows.append(
+            f'<tr><td colspan="2" style="padding:6px 0;color:{muted};font-size:11px;line-height:1.65;{font}">'
+            f'今日样本中暂无净多头信号占优的板块，等待新数据。</td></tr>'
+        )
+    if pressure_sectors:
+        opp_rows.append(_group_label(danger_hi, "承压方向", "净空头信号板块 · 资金回避方向"))
+        for rank, entry in enumerate(pressure_sectors, 1):
+            opp_rows.append(_opp_row(rank, entry, True))
+    opportunities_card = (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="width:100%;margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};">'
+        f'<tr><td style="padding:11px 12px 10px;">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+        f'<td style="color:{neon_green};background:{black};padding:2px 5px;font-size:10px;line-height:1.4;letter-spacing:1px;{font}">AI 板块机会</td>'
+        f'<td align="right" valign="middle" style="white-space:nowrap;color:{muted};font-size:10px;{font}">基于 {analysis["signals"]} 条多空信号</td>'
+        f'</tr></table>'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:2px 0 0;">{"".join(opp_rows)}</table>'
+        f'</td></tr></table>'
     )
 
     # 最新 A 股复盘（六维度内容策略）：标题条 + AI 一句话 + 指数条 + 六个观点行 + 数据来源。
@@ -1601,7 +1701,10 @@ def build_html(brief: dict, now: datetime | None = None, review: dict | None = N
         f'{points_html}'
         f'</td></tr></table>'
 
-        # 最新 A 股六维度复盘：紧跟开篇 AI 总结，同属「开头 AI 部分」。
+        # 板块机会清单：紧跟「AI 每日总结」的观点 3/4（利好·利差板块、资金流向），给出逐板块证据。
+        + opportunities_card
+
+        # 最新 A 股六维度复盘：紧随板块机会，同属「开头 AI 部分」。
         + ashare_card
 
         # Compact report counters.

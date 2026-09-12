@@ -161,6 +161,105 @@ class AnalyzeBriefTest(unittest.TestCase):
         self.assertIn("暂无", battle)
 
 
+class SectorOpportunityTest(unittest.TestCase):
+    """「AI 板块机会」板块：机会方向（净多头 Top 4）/ 承压方向（净空头 Top 2）+ 支撑证据。"""
+
+    def _brief(self, titles, sources=("金十数据",)):
+        return {name: [{"title": t, "url": f"https://example.com/{i}"} for i, t in enumerate(titles)]
+                for name in sources}
+
+    def test_opportunity_fields_and_counts(self):
+        ana = sources.analyze_brief(self._brief([
+            "贵金属黄金价格暴涨创新高",
+            "地产股债务逾期风险警示，房价承压下跌",
+        ]))
+        opp = ana["opportunity_sectors"]
+        self.assertEqual(len(opp), 1)
+        self.assertEqual(opp[0]["tag"], "贵金属")
+        self.assertEqual(opp[0]["up"], 1)
+        self.assertEqual(opp[0]["down"], 0)
+        self.assertEqual(opp[0]["net"], 1)
+        self.assertEqual(opp[0]["mentions"], 1)
+        self.assertEqual(opp[0]["sources"], 1)
+        self.assertEqual(len(opp[0]["evidence"]), 1)
+        self.assertEqual(opp[0]["evidence"][0]["source"], "金十数据")
+        self.assertTrue(opp[0]["evidence"][0]["title"])
+
+    def test_opportunity_ranking_and_top4_limit(self):
+        # 净多信号：贵金属 3、AI 算力 2、其余各 1 → 按净信号强度排序，且只取 Top 4。
+        titles = [
+            "黄金价格暴涨创新高",
+            "白银大幅上涨，贵金属反弹",
+            "稀土矿产出口利好，价格回升",
+            "AI 算力投资创新高，数据中心扩产超预期",
+            "人工智能大模型订单暴增",
+            "光模块订单暴增，光通信景气度回升",
+            "半导体设备股大涨，芯片扩产加速",
+            "央行宣布降息，美元流动性暴增",
+            "医药医疗股反弹，临床数据超预期",
+        ]
+        ana = sources.analyze_brief(self._brief(titles))
+        tags = [e["tag"] for e in ana["opportunity_sectors"]]
+        self.assertEqual(len(tags), 4)
+        self.assertEqual(tags[0], "贵金属")
+        self.assertEqual(tags[1], "AI 算力")
+        self.assertNotIn("美联储", tags)  # 净信号较弱的主题被 Top 4 截断
+        # 前 3 名必须与「利好 / 利差板块」观点的利好板块一致（同一套排序）。
+        self.assertEqual(tags[:3], ana["sectors_up"])
+
+    def test_pressure_ranking_and_top2_limit(self):
+        # 净空信号：地产 2、地缘 1、消费 1 → 承压方向只取 Top 2。
+        titles = [
+            "地产股债务逾期，房价下跌承压",
+            "楼市房企风险警示，股价暴跌",
+            "伊朗海峡危机风险警示",
+            "消费疲软，零售额下跌",
+        ]
+        ana = sources.analyze_brief(self._brief(titles))
+        tags = [e["tag"] for e in ana["pressure_sectors"]]
+        self.assertEqual(tags, ["地产", "地缘"])
+        self.assertEqual(ana["pressure_sectors"][0]["net"], -2)
+        self.assertNotIn("消费", tags)
+        self.assertEqual(tags[:2], ana["sectors_down"])
+
+    def test_evidence_prefers_matching_direction(self):
+        titles = [
+            "AI 大模型扩产，算力投资暴增",
+            "人工智能数据中心订单超预期",
+            "AI 概念股暴跌，算力泡沫争议",
+        ]
+        ana = sources.analyze_brief(self._brief(titles))
+        opp = ana["opportunity_sectors"][0]
+        self.assertEqual(opp["tag"], "AI 算力")
+        self.assertEqual(opp["up"], 2)
+        self.assertEqual(opp["down"], 1)
+        self.assertEqual([ev["title"] for ev in opp["evidence"]],
+                         [titles[0], titles[1], titles[2]])  # 多头证据在前
+
+    def test_evidence_keeps_cross_source_corroboration(self):
+        # 同一标题被多个数据源命中（跨源佐证）：证据保留两条，便于展示多源共振。
+        ana = sources.analyze_brief(self._brief(
+            ["黄金价格暴涨创新高"], sources=("金十数据", "财联社 电报")))
+        opp = ana["opportunity_sectors"][0]
+        self.assertEqual(opp["sources"], 2)
+        self.assertEqual(len(opp["evidence"]), 2)
+        self.assertEqual({ev["source"] for ev in opp["evidence"]}, {"金十数据", "财联社 电报"})
+
+    def test_signals_sample_size(self):
+        ana = sources.analyze_brief(self._brief([
+            "黄金价格暴涨创新高",
+            "地产股债务逾期风险警示，房价下跌",
+            "今天天气不错",  # 无方向信号，不计入样本
+        ]))
+        self.assertEqual(ana["signals"], 2)
+
+    def test_empty_brief_has_no_opportunities(self):
+        ana = sources.analyze_brief({})
+        self.assertEqual(ana["opportunity_sectors"], [])
+        self.assertEqual(ana["pressure_sectors"], [])
+        self.assertEqual(ana["signals"], 0)
+
+
 class BuildHtmlTest(unittest.TestCase):
     def test_build_html_contains_sources_and_items(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
@@ -179,6 +278,41 @@ class BuildHtmlTest(unittest.TestCase):
         out = sources.build_html({})
         self.assertIn("暂无可统计的多空信号", out)
         self.assertIn("资金流向分析", out)
+        self.assertIn("暂无净多头信号占优的板块", out)
+
+    def test_build_html_renders_sector_opportunity_card(self):
+        # 「AI 板块机会」：机会方向（净多头排序 + 证据）与承压方向（净空头）都在简报里渲染。
+        brief = {
+            "华尔街见闻 快讯": [{"title": "AI 算力投资创新高，数据中心扩产超预期", "url": ""}],
+            "金十数据": [
+                {"title": "黄金价格暴涨创新高", "url": ""},
+                {"title": "地产股债务逾期风险警示，房价下跌", "url": ""},
+            ],
+        }
+        out = sources.build_html(brief)
+        self.assertIn("AI 板块机会", out)
+        self.assertIn("机会方向", out)
+        self.assertIn("净多", out)
+        self.assertIn("承压方向", out)
+        self.assertIn("净空", out)
+        # 证据要带上数据源名称
+        self.assertIn("华尔街见闻 快讯", out)
+        self.assertIn("基于 3 条多空信号", out)
+        # 位置：紧跟「AI 每日总结」，在「AI 研判」之前（开头 AI 部分）。
+        self.assertLess(out.index("AI 每日总结"), out.index("AI 板块机会"))
+        self.assertLess(out.index("AI 板块机会"), out.index("AI 研判"))
+
+    def test_build_html_opportunity_card_honest_when_no_signals(self):
+        out = sources.build_html({})
+        self.assertIn("AI 板块机会", out)
+        self.assertIn("暂无净多头信号占优的板块", out)
+        self.assertNotIn("承压方向", out)
+
+    def test_build_html_opportunity_evidence_is_escaped(self):
+        brief = {"金十数据": [{"title": "AI 大模型扩产 <script>alert(1)</script> 暴涨", "url": ""}]}
+        out = sources.build_html(brief)
+        self.assertIn("&lt;script&gt;", out)
+        self.assertNotIn("<script>alert", out)
 
     def test_escapes_html(self):
         out = sources.build_html({"金十数据": [{"title": "<b>x</b>", "url": ""}]})
