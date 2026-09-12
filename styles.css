@@ -516,6 +516,46 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 
 .insight-points mark { padding: 1px 3px; background: var(--black); color: var(--green); }
 
+/* AI 板块机会卡片：机会/承压分组行 + 支撑证据行（与简报同口径，页面为静态预览） */
+.sector-points .group-row {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  margin-top: 6px;
+  padding: 8px 0 1px;
+  border-top: 1px dashed var(--rule);
+}
+
+.sector-points .group-row:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+
+.sector-points .group-label {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  background: var(--black);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sector-points .group-label.press { color: #ff8d7e; }
+.sector-points .point-label.press { color: #ff8d7e; }
+.sector-points .group-note { color: var(--ink-soft); font-size: 10px; line-height: 1.6; }
+.sector-points mark.press { background: #2a1210; color: #ff8d7e; }
+.sector-points .sector-stat { color: var(--ink-soft); font-size: 10px; font-weight: 400; margin-left: 6px; }
+
+.sector-evidence {
+  margin: 3px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.sector-evidence li { padding: 1px 0; word-break: break-all; }
+.sector-evidence .ev-src { color: var(--ink); }
+
 .insight-meta { display: flex; gap: 6px; margin-bottom: 9px; flex-wrap: wrap; }
 
 .meta-tag {
