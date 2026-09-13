@@ -456,25 +456,82 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertNotIn("<b>x</b>", out)
 
     def test_build_html_length_under_pushplus_limit(self):
-        # 即使每个源都有大量长标题快讯，生成 HTML 依然严格控制在 19,500 字以内（符合 PushPlus 2万字限制）
+        # 默认 10 万字口径：即使每个源都有大量长标题快讯，生成 HTML 依然严格控制在 98,000 字以内
         huge_brief = {
-            name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/test"} for _ in range(20)]
+            name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/test"} for _ in range(60)]
             for name in sources.SOURCES
         }
         out = sources.build_html(huge_brief, **self._kanpan())
-        self.assertLessEqual(len(out), 19500)
+        self.assertLessEqual(len(out), 98000)
 
-    def test_build_html_member_mode_unlocks_full_items(self):
-        # 当 PUSHPLUS_MEMBER=1 启用时，解封 10 万字上限并展示全量快讯
-        os.environ["PUSHPLUS_MEMBER"] = "1"
+    def test_build_html_default_quota_is_100k_full_items(self):
+        # 默认即为会员口径（10 万字 / 每源 20 条）：每个源都出现在简报里，不再被精选 3 条截断。
+        self.assertEqual(sources.pushplus_quota(), (98000, 20))
+        self.assertEqual(sources.default_fetch_limit(), sources.LIMIT_MEMBER)
+        brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
+                 for name in sources.SOURCES}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("金十数据 第 7 条快讯", out)     # 第 8 条也在（普通口径只展示前 3 条）
+        self.assertIn("不构成投资建议", out)
+
+    def test_build_html_free_mode_still_capped_at_20k(self):
+        # 显式 PUSHPLUS_MEMBER=0 退回普通账号口径：上限 19,500 字符、每源精选 3 条。
+        os.environ["PUSHPLUS_MEMBER"] = "0"
         try:
-            brief = {name: sources._demo_items(name) for name in sources.SOURCES}
-            out = sources.build_html(brief, **self._kanpan())
-            self.assertTrue(sources._is_pushplus_member())
-            for name in sources.SOURCES:
-                self.assertIn(sources._esc(name), out)
+            self.assertFalse(sources._is_pushplus_member())
+            self.assertEqual(sources.pushplus_quota(), (19500, 3))
+            self.assertEqual(sources.default_fetch_limit(), sources.LIMIT)
+            huge_brief = {
+                name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/t"}
+                       for _ in range(60)]
+                for name in sources.SOURCES
+            }
+            out = sources.build_html(huge_brief, **self._kanpan())
+            self.assertLessEqual(len(out), 19500)
+            brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
+                     for name in sources.SOURCES}
+            out2 = sources.build_html(brief, **self._kanpan())
+            self.assertIn("金十数据 第 2 条快讯", out2)
+            self.assertNotIn("金十数据 第 3 条快讯", out2)  # 精选口径只展示前 3 条
         finally:
             os.environ.pop("PUSHPLUS_MEMBER", None)
+
+    def test_pushplus_quota_env_overrides(self):
+        # PUSHPLUS_MAX_CHARS / PUSHPLUS_ITEMS_PER_SOURCE / BRIEF_FETCH_LIMIT 可显式覆盖，无需改代码。
+        try:
+            os.environ["PUSHPLUS_MAX_CHARS"] = "50000"
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "6"
+            os.environ["BRIEF_FETCH_LIMIT"] = "9"
+            self.assertEqual(sources.pushplus_quota(), (50000, 6))
+            self.assertEqual(sources.default_fetch_limit(), 9)
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "all"
+            self.assertEqual(sources.pushplus_quota(), (50000, None))
+            # 非法值回退默认，不至于把推送配置成 0 字或负数条。
+            os.environ["PUSHPLUS_MAX_CHARS"] = "abc"
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "-3"
+            del os.environ["PUSHPLUS_ITEMS_PER_SOURCE"]
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "xyz"
+            self.assertEqual(sources.pushplus_quota()[0], 98000)
+            self.assertEqual(sources.pushplus_quota()[1], 20)
+        finally:
+            for key in ("PUSHPLUS_MAX_CHARS", "PUSHPLUS_ITEMS_PER_SOURCE", "BRIEF_FETCH_LIMIT"):
+                os.environ.pop(key, None)
+
+    def test_source_rows_class_attr_is_well_formed(self):
+        # 回归：数据源行曾拼出 class="td-n class="td-bdr""（嵌套属性），分隔线样式失效。
+        brief = {name: [{"title": f"标题 {i}", "url": ""} for i in range(3)] for name in sources.SOURCES}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertNotIn('class="td-bdr"', out)
+        self.assertIn('class="td-n td-bdr"', out)
+        self.assertEqual(out.count('class="td-t td-bdr"'), 18 * 2)
+
+    def test_build_html_custom_max_chars_shrinks_items(self):
+        # 自定义较小上限时按每源条数逐级收敛，保证内容仍能发出去。
+        brief = {name: [{"title": f"{name} 的快讯标题内容示例" * 2, "url": ""} for _ in range(20)]
+                 for name in sources.SOURCES}
+        out_small = sources.build_html(brief, max_length=24000, **self._kanpan())
+        self.assertLessEqual(len(out_small), 24000)
+        self.assertIn("AI 政策分析", out_small)   # AI 板块始终保留，只收敛快讯列表
 
 
 class AshareReviewTest(unittest.TestCase):

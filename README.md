@@ -32,7 +32,7 @@ python3 -m http.server 8080
 
 ## 数据与推送
 
-脚本会抓取 18 个数据源，网络不可用时自动使用内置演示数据。配置 `PUSHPLUS_TOKEN` 后，可通过 GitHub Actions 或本地服务执行推送：
+脚本会抓取 18 个数据源，网络不可用时自动使用内置演示数据。**推送内容默认按 PushPlus 10 万字上限口径生成**（由 `sources.pushplus_quota()` 统一决定字符上限与每源条数，`build_html()` 自动遵守）。配置 `PUSHPLUS_TOKEN` 后，可通过 GitHub Actions 或本地服务执行推送：
 
 ```bash
 PUSHPLUS_TOKEN=xxx python3 push_brief.py
@@ -40,9 +40,12 @@ PUSHPLUS_TOKEN=xxx python3 push_brief.py
 
 **推送前大盘数据新鲜度检查（不是最新就不推）**：推送前会先确认简报里的「AI 看盘」A 股数据为最新——①行情接口可用（东方财富主源与腾讯证券备用源至少一个可用）；②接口数据不滞后（最新日 K 不早于内置快照基线）；③复盘数据来自实时接口（东方财富或腾讯证券备用源，非内置快照兜底）且复盘日等于最近一个可复盘交易日。任何一条不满足即放弃本次推送：`push_brief.py` 退出码 3（GitHub Actions 显示为失败，便于发现行情源异常），本地服务 `POST /api/run` 返回 409 并透出具体原因。页面「AI 看盘」标题右侧的标签实时展示该检查结果（`GET /api/market`）。
 
-相关环境变量（测试/应急/会员扩展）：
+相关环境变量（推送容量 / 测试 / 应急）：
 
-- `PUSHPLUS_MEMBER=1`：开通 PushPlus 会员后配置，解锁 10 万字推送上限与全量快讯展示（普通用户默认上限 2 万字，精选展示）。
+- `PUSHPLUS_MEMBER=0`：**推送容量口径**。默认即按 PushPlus 会员的 **10 万字** 上限生成（留 2,000 字符安全余量 → 98,000 字符，每个数据源最多 20 条）；普通/实名账号（2 万字上限）显式设为 `0` 即退回精选口径（19,500 字符 · 每源 3 条）。
+- `PUSHPLUS_MAX_CHARS=98000`：自定义单条推送字符上限（覆盖上面的会员/普通默认值；超上限时自动逐级收敛每源条数，保证发得出去）。
+- `PUSHPLUS_ITEMS_PER_SOURCE=20`：自定义每个数据源最多展示条数（`all` = 抓到的全部快讯）。
+- `BRIEF_FETCH_LIMIT=20`：自定义每个数据源的抓取条数（默认与展示口径一致，避免「额度放宽了但内容没变多」）。
 - `SKIP_MARKET_CHECK=1`：跳过新鲜度检查，直接推送。
 - `MARKET_FRESHNESS_FORCE=fresh|stale`：强制检查结果，用于联调测试。
 

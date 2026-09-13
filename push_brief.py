@@ -41,7 +41,8 @@ PUSHPLUS_ERROR_HINTS = {
     905: "账户未完成实名认证：到 pushplus.plus 完成实名认证后即可发送",
     999: (
         "服务端验证错误（具体原因在完整返回内容里，见上一行）。常见原因："
-        "① 推送内容过大（普通用户限制 2 万字，会员限制 10 万字；会员可设置 PUSHPLUS_MEMBER=1）；"
+        "① 推送内容过大（PushPlus 限制：会员 10 万字、普通账号 2 万字。本仓库默认按 10 万字口径生成；"
+        "若账号未开通会员，设 PUSHPLUS_MEMBER=0 即退回 2 万字精选口径，或用 PUSHPLUS_MAX_CHARS 自定义上限）；"
         "② 账号实名认证过期，需重新认证；"
         "③ token 已失效，重新登录 www.pushplus.plus 复制最新 token"
     ),
@@ -71,10 +72,14 @@ def main():
     # 诊断：打印 token 长度，帮助排查空白字符问题
     token = token.strip()
     print(f"诊断：PUSHPLUS_TOKEN 长度={len(token)}", flush=True)
-    if sources._is_pushplus_member():
-        print("诊断：PUSHPLUS_MEMBER 已启用，按会员模式推送（上限 10 万字，展示全量快讯）", flush=True)
-    else:
-        print("诊断：当前为普通用户模式（上限 2 万字，精选快讯）；若已开通会员可在 Secrets 中设置 PUSHPLUS_MEMBER=1 解锁 10 万字全量推送", flush=True)
+    max_chars, items_per_source = sources.pushplus_quota()
+    tier = "会员 10 万字" if sources._is_pushplus_member() else "普通账号 2 万字"
+    items_desc = "展示全量快讯" if items_per_source is None else f"每源最多展示 {items_per_source} 条"
+    print(f"诊断：推送容量 {max_chars:,} 字符（{tier}上限，各留 2,000 安全余量）· "
+          f"{items_desc} · 每源抓取 {sources.default_fetch_limit()} 条", flush=True)
+    if not sources._is_pushplus_member():
+        print("诊断：检测到 PUSHPLUS_MEMBER=0，已按普通账号 2 万字精选口径生成；"
+              "删除该变量即恢复 10 万字全量推送", flush=True)
     if TOPIC:
         print(f"诊断：本次为一对多推送（群组编码 topic={TOPIC}）", flush=True)
     else:
@@ -139,7 +144,9 @@ def main():
         # 官方文档：code=999 等错误需「具体查看返回内容」，打印完整返回体定位根因。
         print(f"诊断：PushPlus 完整返回={json.dumps(result, ensure_ascii=False)}", flush=True)
         if data_detail and any(kw in str(data_detail) for kw in ("过大", "超长", "限制", "大小")):
-            hint = f"推送内容超过 PushPlus 限制（{data_detail}）。普通用户限制 2 万字，若已是会员请在 Secrets 中配置 PUSHPLUS_MEMBER=1 解锁 10 万字推送"
+            hint = (f"推送内容超过 PushPlus 限制（{data_detail}）。本仓库默认按 10 万字会员口径生成；"
+                    f"若账号实际未开通会员，请在 Secrets 中设 PUSHPLUS_MEMBER=0 退回 2 万字精选口径，"
+                    f"或用 PUSHPLUS_MAX_CHARS 指定字符上限")
         else:
             hint = PUSHPLUS_ERROR_HINTS.get(code)
             if hint and data_detail and str(data_detail) not in hint:

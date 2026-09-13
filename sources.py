@@ -26,6 +26,8 @@
     analyze_hk()       : 最新港股看盘引擎（三大指数/成交额/涨跌家数/板块/南向资金/后市）
     get_us_market()    : 采集最新美股行情（道指/标普/纳指，主备源 + 快照兜底）
     analyze_us()       : 最新美股看盘引擎（三大指数/成交额/涨跌家数/板块/资金避险/后市）
+    pushplus_quota()   : 推送容量口径（默认 PushPlus 10 万字 / 98,000 字符 + 每源 20 条）
+    default_fetch_limit() : 每个数据源默认抓取条数（与推送口径一致）
     check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
     collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
     build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（含「AI 政策分析」与 A 股 / 港股 / 美股「AI 看盘」）
@@ -46,7 +48,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
 
 TIMEOUT = 8
-LIMIT = 5             # 每个源默认取前 5 条
+LIMIT = 5             # 每个源默认取前 5 条（普通账号 2 万字口径够用）
+LIMIT_MEMBER = 20     # 10 万字口径下每源抓 20 条：把放宽的字符额度真正用起来
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
@@ -479,8 +482,13 @@ _COLLECTORS = {
 }
 
 
-def collect_one(name: str, limit: int = LIMIT) -> list:
-    """抓取单个源：自定义收集器 / 聚合通道 → 演示数据兜底。"""
+def collect_one(name: str, limit: int | None = None) -> list:
+    """抓取单个源：自定义收集器 / 聚合通道 → 演示数据兜底。
+
+    ``limit`` 缺省时按推送口径自动取（会员 10 万字 → 20 条，普通 2 万字 → 5 条），
+    可用 ``BRIEF_FETCH_LIMIT`` 显式覆盖。
+    """
+    limit = default_fetch_limit() if limit is None else limit
     meta = next((m for m in SOURCE_META if m["name"] == name), None)
     if not meta:
         return []
@@ -511,13 +519,16 @@ def collect_one(name: str, limit: int = LIMIT) -> list:
     return _demo_items(name)
 
 
-def collect_all(limit: int = LIMIT) -> dict:
-    """依次抓取全部 18 个源。返回 {name: [item, ...]}。"""
+def collect_all(limit: int | None = None) -> dict:
+    """依次抓取全部 18 个源。返回 {name: [item, ...]}。
+
+    ``limit`` 缺省时按推送口径自动取（见 :func:`default_fetch_limit`）。
+    """
+    limit = default_fetch_limit() if limit is None else limit
     result = {}
     for meta in SOURCE_META:
-        cur_limit = limit
-        if meta["name"] in ["抖音热搜", "微博实时热搜"]:
-            cur_limit = 10
+        # 热搜类榜单：多抓一些，方便「重点关注」与主题统计取样（不小于全局口径）。
+        cur_limit = max(limit, 10) if meta["name"] in ["抖音热搜", "微博实时热搜"] else limit
         result[meta["name"]] = collect_one(meta["name"], cur_limit)
     return result
 
@@ -2141,9 +2152,69 @@ def _trunc(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+# PushPlus 单条推送字符上限：会员 10 万字、普通账号 2 万字。这里各留 2,000 字符安全余量
+# （HTML 标签本身也计字符，避免刚好卡在服务端阈值上被拒）。
+PUSHPLUS_MEMBER_MAX_CHARS = 98000       # 10 万字口径
+PUSHPLUS_FREE_MAX_CHARS = 19500         # 2 万字口径
+PUSHPLUS_MEMBER_MAX_ITEMS_PER_SOURCE = 20   # 会员口径：每个数据源最多 20 条
+PUSHPLUS_FREE_MAX_ITEMS_PER_SOURCE = 3      # 普通口径：精选前 3 条
+PUSHPLUS_MEMBER_DEFAULT = True          # 默认按 10 万字口径出全量内容
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """布尔环境变量：显式写了才按值判定（1/true/yes/on 为真），没写用默认值。"""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int | None) -> int | None:
+    """整数环境变量：未设置或非法时返回默认值。"""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def default_fetch_limit() -> int:
+    """每个数据源的默认抓取条数：与推送口径一致，避免「额度放宽了但内容没变多」。
+
+    ``BRIEF_FETCH_LIMIT`` 可显式覆盖（如临时压缩抓取量、或会员账号想更多）。
+    """
+    return _env_int("BRIEF_FETCH_LIMIT", LIMIT_MEMBER if _is_pushplus_member() else LIMIT)
+
+
 def _is_pushplus_member() -> bool:
-    """检查环境变量 PUSHPLUS_MEMBER 是否启用（1/true/yes/on）。"""
-    return os.environ.get("PUSHPLUS_MEMBER", "").strip().lower() in ("1", "true", "yes", "on")
+    """是否按 PushPlus 会员口径（10 万字 / 全量快讯）推送。
+
+    默认即为会员口径；普通账号或想退回 2 万字精选版时显式设 ``PUSHPLUS_MEMBER=0``。
+    """
+    return _env_flag("PUSHPLUS_MEMBER", PUSHPLUS_MEMBER_DEFAULT)
+
+
+def pushplus_quota() -> tuple[int, int | None]:
+    """本次推送的容量口径：(字符上限, 每个数据源最多展示条数；None = 全量展示)。
+
+    优先级：``PUSHPLUS_MAX_CHARS`` / ``PUSHPLUS_ITEMS_PER_SOURCE`` 显式覆盖
+    → 否则按会员口径（98,000 字符 / 每源 20 条）或普通口径（19,500 字符 / 精选 3 条）。
+    ``PUSHPLUS_ITEMS_PER_SOURCE=all``（或 0）表示展示抓到的全部快讯。
+    把上限与条数放在一起，保证推送既尽量用满额度、又不会超阈值被 PushPlus 拒绝。
+    """
+    member = _is_pushplus_member()
+    max_length = _env_int("PUSHPLUS_MAX_CHARS",
+                          PUSHPLUS_MEMBER_MAX_CHARS if member else PUSHPLUS_FREE_MAX_CHARS)
+    default_items = PUSHPLUS_MEMBER_MAX_ITEMS_PER_SOURCE if member else PUSHPLUS_FREE_MAX_ITEMS_PER_SOURCE
+    raw_items = os.environ.get("PUSHPLUS_ITEMS_PER_SOURCE", "").strip().lower()
+    if raw_items in ("all", "full", "0", "-1"):
+        items: int | None = None
+    else:
+        items = _env_int("PUSHPLUS_ITEMS_PER_SOURCE", default_items)
+    return max_length, items
 
 
 def build_html(
@@ -2162,16 +2233,19 @@ def build_html(
     ``now`` 保留在接口中以兼容现有调用，但报告标题不展示推送时间。
     ``review`` 为 A 股看盘结果；缺省时自动调用 analyze_ashare()（实时采集 → 快照兜底）。
     ``hk_review`` / ``us_review`` 为港股、美股看盘结果；缺省时分别调用 analyze_hk() / analyze_us()。
-    ``max_items_per_source`` 控制每个数据源卡片展示的最大条数。未指定时：
-      - 普通/实名用户（默认）：精选展示前 3 条，单条推送限制在 2 万字以内；
-      - PushPlus 会员（PUSHPLUS_MEMBER=1）：展示全量快讯（支持 10 万字推送）。
-    ``max_length`` 字符上限。未指定时，普通用户为 19,500 字符，会员为 98,000 字符。
+    ``max_items_per_source`` 控制每个数据源卡片展示的最大条数。未指定时按
+    :func:`pushplus_quota` 的口径取值：默认（会员口径）每源最多 20 条、单条推送
+    上限 98,000 字符（10 万字留 2,000 余量）；显式设 ``PUSHPLUS_MEMBER=0`` 退回
+    普通账号口径——精选前 3 条、上限 19,500 字符（2 万字留余量）。
+    ``max_length`` 字符上限，未指定时同样取 ``pushplus_quota()`` 的字符上限。
+    超上限时按每源条数逐级收敛（20 → 15 → 12 → 10 → 8 → 6 → 5 → 4 → 3 → 2 → 1），
+    保证任何账号类型都能发出去、不被 PushPlus 拒收。
     """
-    is_member = _is_pushplus_member()
-    if max_items_per_source is None and not is_member:
-        max_items_per_source = 3
+    quota_max_length, quota_items_per_source = pushplus_quota()
+    if max_items_per_source is None:
+        max_items_per_source = quota_items_per_source
     if max_length is None:
-        max_length = 98000 if is_member else 19500
+        max_length = quota_max_length
 
     # E-ink editorial palette: paper first, ink second, green only for emphasis.
     neon_green = "#b7ff00"
@@ -2442,10 +2516,11 @@ def build_html(
                 title = _trunc(str(item.get("title", "")), 75)
                 url = item.get("url") or ""
                 title_html = f'<a href="{_esc(url)}" class="lnk">{title}</a>' if url else title
-                bdr = 'class="td-bdr"' if item_index < len(items) else ''
+                # 只填 class 值（早先写成 'class="td-bdr"' 会拼出嵌套 class 属性，边框样式失效）。
+                bdr = 'td-bdr' if item_index < len(items) else ''
                 rows.append(
-                    f'<tr><td class="td-n {bdr}">{item_index:02d}</td>'
-                    f'<td class="td-t {bdr}">{title_html}</td></tr>'
+                    f'<tr><td class="td-n{(" " + bdr) if bdr else ""}">{item_index:02d}</td>'
+                    f'<td class="td-t{(" " + bdr) if bdr else ""}">{title_html}</td></tr>'
                 )
             if not rows:
                 rows.append(f'<tr><td colspan="2" class="sub">暂未抓取到内容</td></tr>')
@@ -2480,7 +2555,10 @@ def build_html(
 
     out = _render_full(max_items_per_source)
     if len(out) > max_length:
-        for limit in (5, 4, 3, 2, 1):
+        # 逐级收敛每源条数；跳过不小于当前上限的档位，避免重复渲染同一结果。
+        for limit in (15, 12, 10, 8, 6, 5, 4, 3, 2, 1):
+            if max_items_per_source is not None and limit >= max_items_per_source:
+                continue
             out = _render_full(limit)
             if len(out) <= max_length:
                 break
