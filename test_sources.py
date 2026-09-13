@@ -260,6 +260,134 @@ class SectorOpportunityTest(unittest.TestCase):
         self.assertEqual(ana["signals"], 0)
 
 
+
+class PolicySectionTest(unittest.TestCase):
+    """「AI 政策分析」板块：政策维度热度 + 多空方向 + 鹰鸽取向（含否定翻转）。"""
+
+    def _brief(self, titles, src=("金十数据",)):
+        return {name: [{"title": t, "url": f"https://example.com/{i}"} for i, t in enumerate(titles)]
+                for name in src}
+
+    @staticmethod
+    def _kanpan():
+        """注入三市场快照，避免 HTML 测试打行情接口。"""
+        return dict(
+            review=sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT),
+            hk_review=sources.analyze_hk(market=sources._HK_SNAPSHOT),
+            us_review=sources.analyze_us(market=sources._US_SNAPSHOT),
+        )
+
+    def test_policy_buckets_heat_and_counts(self):
+        p = sources.analyze_policy(self._brief([
+            "美联储加息 25 个基点，缩表加速",
+            "央行开展 5000 亿元买断式逆回购，流动性净投放",
+            "美国拟对中国数据中心设备加征关税并实施出口管制",
+        ]))
+        tags = {b["tag"] for b in p["buckets"]}
+        self.assertIn("货币政策 · 美联储", tags)
+        self.assertIn("央行 · 流动性", tags)
+        self.assertIn("财政 · 关税与债务", tags)
+        fed = next(b for b in p["buckets"] if b["tag"] == "货币政策 · 美联储")
+        self.assertEqual(fed["sources"], 1)
+        self.assertEqual(fed["mentions"], 1)
+        self.assertEqual(p["sources_hit"], 1)
+        self.assertEqual(p["mentions"], 3)
+
+    def test_hawkish_vs_dovish_stance(self):
+        hawk = sources.analyze_policy(self._brief(["美联储鹰派发声：年内继续加息、维持缩表"]))
+        dove = sources.analyze_policy(self._brief(["央行宣布降准降息，释放流动性支持实体经济"]))
+        self.assertEqual(hawk["stance"], "偏鹰")
+        self.assertEqual(dove["stance"], "偏鸽")
+
+    def test_negation_flips_stance(self):
+        # 「不再那么鸽派」= 立场转鹰：否定词必须把票翻转，而不是按字面计入鸽派。
+        p = sources.analyze_policy(self._brief([
+            "“新美联储通讯社”：贝森特政策反应函数转向不再那么鸽派",
+            "Bessent policy reaction function shifts, no longer so dovish",
+        ]))
+        self.assertEqual(p["stance"], "偏鹰")
+        self.assertGreaterEqual(p["hawk"], 2)
+        self.assertEqual(p["dove"], 0)
+        fed = next(b for b in p["buckets"] if b["tag"] == "货币政策 · 美联储")
+        self.assertEqual(fed["evidence"][0]["stance"], "鹰派")
+
+    def test_ascii_keywords_need_word_boundary(self):
+        # FedEx / 含 fed 的普通单词不应被当成「美联储（Fed）」政策信号。
+        p = sources.analyze_policy(self._brief(["FedEx 季度营收超预期，上调全年指引"]))
+        self.assertEqual(p["mentions"], 0)
+        self.assertEqual(p["buckets"], [])
+        self.assertIn("暂无政策面信号", p["headline"])
+
+    def test_direction_and_pressure_split(self):
+        p = sources.analyze_policy(self._brief([
+            "央行降准降息，流动性宽松预期利好股市",
+            "伊朗海峡局势升级，制裁与战争风险警示",
+        ]))
+        self.assertIn("央行 · 流动性", p["up_tags"])
+        self.assertIn("地缘与贸易政策", p["down_tags"])
+        self.assertEqual(p["bull"], 1)
+        self.assertEqual(p["bear"], 1)
+        self.assertEqual(p["signals"], 2)
+
+    def test_cross_source_dedupe(self):
+        # 同一条新闻被多个源命中：整体提及按 (来源, 标题) 去重计 2 条，但热度只算 2 条独立来源。
+        p = sources.analyze_policy(self._brief(
+            ["美联储维持利率不变"], src=("金十数据", "财联社 电报")))
+        self.assertEqual(p["mentions"], 2)
+        self.assertEqual(p["sources_hit"], 2)
+        fed = next(b for b in p["buckets"] if b["tag"] == "货币政策 · 美联储")
+        self.assertEqual(fed["sources"], 2)
+
+    def test_empty_brief_is_honest(self):
+        p = sources.analyze_policy({})
+        self.assertEqual(p["buckets"], [])
+        self.assertEqual(p["mentions"], 0)
+        self.assertEqual(p["stance"], "中性")
+        self.assertIn("暂无政策面信号", p["headline"])
+        self.assertNotIn("偏鹰", p["headline"])
+
+    def test_demo_brief_has_policy_content(self):
+        brief = {name: sources._demo_items(name) for name in sources.SOURCES}
+        p = sources.analyze_policy(brief)
+        self.assertTrue(p["buckets"])
+        self.assertTrue(p["headline"])
+        self.assertLessEqual(len(p["headline"]), 200)
+
+    def test_analyze_brief_exposes_policy(self):
+        ana = sources.analyze_brief(self._brief(["美联储加息"]))
+        self.assertIn("policy", ana)
+        self.assertEqual(ana["policy"]["buckets"][0]["tag"], "货币政策 · 美联储")
+
+    def test_build_html_renders_policy_card(self):
+        brief = {
+            "华尔街见闻 快讯": [{"title": "“新美联储通讯社”：贝森特政策反应函数转向不再那么鸽派", "url": ""}],
+            "金十数据": [
+                {"title": "央行降准降息，流动性宽松利好成长板块", "url": ""},
+                {"title": "伊朗海峡危机升级，制裁风险警示", "url": ""},
+            ],
+        }
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("AI 政策分析", out)
+        self.assertIn("政策主线", out)
+        self.assertIn("政策净空", out)
+        self.assertIn("偏鹰", out)
+        self.assertIn("条政策提及", out)
+        # 位置：紧跟「AI 板块机会」，在「AI 看盘」之前。
+        self.assertLess(out.index("AI 板块机会"), out.index("AI 政策分析"))
+        self.assertLess(out.index("AI 政策分析"), out.index("AI 看盘"))
+
+    def test_build_html_policy_card_honest_when_no_signals(self):
+        out = sources.build_html({"金十数据": [{"title": "今天天气不错", "url": ""}]}, **self._kanpan())
+        self.assertIn("AI 政策分析", out)
+        self.assertIn("暂无政策面信号可统计", out)
+
+    def test_build_html_policy_evidence_is_escaped(self):
+        brief = {"金十数据": [{"title": "美联储：<script>alert(1)</script> 加息", "url": ""}]}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("&lt;script&gt;", out)
+        self.assertNotIn("<script>alert", out)
+
+
 class BuildHtmlTest(unittest.TestCase):
     def _kanpan(self):
         """注入三市场快照，避免 HTML 测试打行情接口，并让看盘内容可断言。"""
@@ -328,25 +456,82 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertNotIn("<b>x</b>", out)
 
     def test_build_html_length_under_pushplus_limit(self):
-        # 即使每个源都有大量长标题快讯，生成 HTML 依然严格控制在 19,500 字以内（符合 PushPlus 2万字限制）
+        # 默认 10 万字口径：即使每个源都有大量长标题快讯，生成 HTML 依然严格控制在 98,000 字以内
         huge_brief = {
-            name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/test"} for _ in range(20)]
+            name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/test"} for _ in range(60)]
             for name in sources.SOURCES
         }
         out = sources.build_html(huge_brief, **self._kanpan())
-        self.assertLessEqual(len(out), 19500)
+        self.assertLessEqual(len(out), 98000)
 
-    def test_build_html_member_mode_unlocks_full_items(self):
-        # 当 PUSHPLUS_MEMBER=1 启用时，解封 10 万字上限并展示全量快讯
-        os.environ["PUSHPLUS_MEMBER"] = "1"
+    def test_build_html_default_quota_is_100k_full_items(self):
+        # 默认即为会员口径（10 万字 / 每源 20 条）：每个源都出现在简报里，不再被精选 3 条截断。
+        self.assertEqual(sources.pushplus_quota(), (98000, 20))
+        self.assertEqual(sources.default_fetch_limit(), sources.LIMIT_MEMBER)
+        brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
+                 for name in sources.SOURCES}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("金十数据 第 7 条快讯", out)     # 第 8 条也在（普通口径只展示前 3 条）
+        self.assertIn("不构成投资建议", out)
+
+    def test_build_html_free_mode_still_capped_at_20k(self):
+        # 显式 PUSHPLUS_MEMBER=0 退回普通账号口径：上限 19,500 字符、每源精选 3 条。
+        os.environ["PUSHPLUS_MEMBER"] = "0"
         try:
-            brief = {name: sources._demo_items(name) for name in sources.SOURCES}
-            out = sources.build_html(brief, **self._kanpan())
-            self.assertTrue(sources._is_pushplus_member())
-            for name in sources.SOURCES:
-                self.assertIn(sources._esc(name), out)
+            self.assertFalse(sources._is_pushplus_member())
+            self.assertEqual(sources.pushplus_quota(), (19500, 3))
+            self.assertEqual(sources.default_fetch_limit(), sources.LIMIT)
+            huge_brief = {
+                name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": "https://example.com/t"}
+                       for _ in range(60)]
+                for name in sources.SOURCES
+            }
+            out = sources.build_html(huge_brief, **self._kanpan())
+            self.assertLessEqual(len(out), 19500)
+            brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
+                     for name in sources.SOURCES}
+            out2 = sources.build_html(brief, **self._kanpan())
+            self.assertIn("金十数据 第 2 条快讯", out2)
+            self.assertNotIn("金十数据 第 3 条快讯", out2)  # 精选口径只展示前 3 条
         finally:
             os.environ.pop("PUSHPLUS_MEMBER", None)
+
+    def test_pushplus_quota_env_overrides(self):
+        # PUSHPLUS_MAX_CHARS / PUSHPLUS_ITEMS_PER_SOURCE / BRIEF_FETCH_LIMIT 可显式覆盖，无需改代码。
+        try:
+            os.environ["PUSHPLUS_MAX_CHARS"] = "50000"
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "6"
+            os.environ["BRIEF_FETCH_LIMIT"] = "9"
+            self.assertEqual(sources.pushplus_quota(), (50000, 6))
+            self.assertEqual(sources.default_fetch_limit(), 9)
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "all"
+            self.assertEqual(sources.pushplus_quota(), (50000, None))
+            # 非法值回退默认，不至于把推送配置成 0 字或负数条。
+            os.environ["PUSHPLUS_MAX_CHARS"] = "abc"
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "-3"
+            del os.environ["PUSHPLUS_ITEMS_PER_SOURCE"]
+            os.environ["PUSHPLUS_ITEMS_PER_SOURCE"] = "xyz"
+            self.assertEqual(sources.pushplus_quota()[0], 98000)
+            self.assertEqual(sources.pushplus_quota()[1], 20)
+        finally:
+            for key in ("PUSHPLUS_MAX_CHARS", "PUSHPLUS_ITEMS_PER_SOURCE", "BRIEF_FETCH_LIMIT"):
+                os.environ.pop(key, None)
+
+    def test_source_rows_class_attr_is_well_formed(self):
+        # 回归：数据源行曾拼出 class="td-n class="td-bdr""（嵌套属性），分隔线样式失效。
+        brief = {name: [{"title": f"标题 {i}", "url": ""} for i in range(3)] for name in sources.SOURCES}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertNotIn('class="td-bdr"', out)
+        self.assertIn('class="td-n td-bdr"', out)
+        self.assertEqual(out.count('class="td-t td-bdr"'), 18 * 2)
+
+    def test_build_html_custom_max_chars_shrinks_items(self):
+        # 自定义较小上限时按每源条数逐级收敛，保证内容仍能发出去。
+        brief = {name: [{"title": f"{name} 的快讯标题内容示例" * 2, "url": ""} for _ in range(20)]
+                 for name in sources.SOURCES}
+        out_small = sources.build_html(brief, max_length=24000, **self._kanpan())
+        self.assertLessEqual(len(out_small), 24000)
+        self.assertIn("AI 政策分析", out_small)   # AI 板块始终保留，只收敛快讯列表
 
 
 class AshareReviewTest(unittest.TestCase):
