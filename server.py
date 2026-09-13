@@ -14,6 +14,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import sources
+# 推送标题与 push_brief.py 共用同一常量，两条推送链路标题保持一致。
+from push_brief import PUSH_TITLE
 
 ROOT = Path(__file__).resolve().parent
 # 推送地址可用环境变量覆盖，默认走真实 PushPlus；测试时指向本地假服务。
@@ -131,7 +133,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         payload = {
             "token": token,
-            "title": "章鱼 AI·全景分析（市场因子分析）",
+            "title": PUSH_TITLE,
             "content": content,
             "template": "html",
         }

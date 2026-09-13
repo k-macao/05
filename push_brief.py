@@ -27,6 +27,8 @@ import sources
 API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
 # 群组编码：一对多推送目标，群成员扫码入群后均可收到；留空则退回一对一（仅发给自己）。
 TOPIC = os.environ.get("PUSHPLUS_TOPIC", "oai.1").strip()
+# 推送标题：脚本推送与本地服务推送共用同一常量，改一处即可两边同步。
+PUSH_TITLE = "章鱼 AI·全景分析（舆情因子分析）"
 SOURCES = sources.SOURCES
 
 # PushPlus 官方返回码 → 排查建议（https://www.pushplus.plus/doc/guide/code.html）
@@ -103,7 +105,7 @@ def main():
 
     payload = {
         "token": token,
-        "title": "章鱼 AI·全景分析（市场因子分析）",
+        "title": PUSH_TITLE,
         "content": build_content(datetime.now(), review=sources.analyze_ashare(market)),
         "template": "html",
     }

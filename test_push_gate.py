@@ -91,6 +91,9 @@ class MarketGateTest(unittest.TestCase):
             payload = json.load(f)["payload"]
         self.assertEqual(payload["token"], "fake-token-gate")
         self.assertIn("章鱼", payload["title"])
+        # 推送标题定位为「舆情因子分析」，且与共用常量一致（防止两条推送链路跑偏）。
+        self.assertIn("舆情因子分析", payload["title"])
+        self.assertEqual(payload["title"], push_brief.PUSH_TITLE)
         self.assertIn("AI 看盘", payload["content"])  # 看盘板块随简报一同推送
         self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送
 
