@@ -19,6 +19,7 @@
     collect_all()      : 依次抓取全部 18 个源，返回 {name: [item, ...]}
     collect_one(name)  : 抓取单个源，返回 [item, ...]
     analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
+    analyze_policy()   : 「AI 政策分析」引擎（政策维度热度 + 多空方向 + 鹰鸽取向）
     get_ashare_market(): 采集最新 A 股行情（东方财富主接口 → 腾讯证券备用接口 → 内置快照兜底）
     analyze_ashare()   : 最新 A 股六维度看盘引擎（三大指数/成交额/涨跌家数/板块/资金/后市）
     get_hk_market()    : 采集最新港股行情（恒生/恒生科技/国企指数，主备源 + 快照兜底）
@@ -27,7 +28,7 @@
     analyze_us()       : 最新美股看盘引擎（三大指数/成交额/涨跌家数/板块/资金避险/后市）
     check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
     collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
-    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（含 A 股 / 港股 / 美股「AI 看盘」）
+    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（含「AI 政策分析」与 A 股 / 港股 / 美股「AI 看盘」）
 """
 from __future__ import annotations
 
@@ -571,6 +572,8 @@ def analyze_brief(brief: dict) -> dict:
         flow          资金流向分析句（纯文本）
         points        开篇四个观点 [{key, label, text}]：
                       1 市场情绪 2 多空博弈概率 3 利好/利差板块 4 资金流向分析
+        policy        「AI 政策分析」板块数据（analyze_policy() 的完整返回值：政策维度热度、
+                      多空方向、鹰鸽取向与总结句）
     """
     theme_sources = {tag: set() for tag, _ in _THEMES}
     theme_mentions = {tag: 0 for tag in theme_sources}
@@ -703,6 +706,7 @@ def analyze_brief(brief: dict) -> dict:
         "pressure_sectors": pressure_sectors,
         "flow": flow,
         "points": points,
+        "policy": analyze_policy(brief),
     }
 
 
@@ -774,6 +778,303 @@ def _compose_flow(sectors_up: list, sectors_down: list, top_themes: list) -> str
     if hot:
         return f"资金目光聚焦{'、'.join(hot)}，但方向性流入尚不明确，轮动观望为主。"
     return "样本有限，资金流向暂不明朗，建议等待更多信号确认。"
+
+
+# ---------------------------------------------------------------- 「AI 政策分析」板块
+# 政策面单列成板块：与「AI 每日总结」「AI 板块机会」共用同一批真实抓取标题，但归因口径
+# 不同——不按行业板块、而按「政策维度」统计：
+#   · 命中维度关键词即计入热度，按数据源去重计权（跨源命中 = 更强的政策信号）；
+#   · 多空方向沿用 _BULLISH / _BEARISH 词库（该政策对市场是支撑还是压制）；
+#   · 另用 _HAWKISH / _DOVISH 词库判定政策取向（偏鹰 = 收紧，偏鸽 = 宽松）。
+# 与其余 AI 板块一样零外部依赖、可离线运行；当日样本没有政策信号时如实标注，不编造结论。
+
+# (政策维度标签, 关键词)。一条标题命中任一关键词即计入该维度。
+# ASCII 关键词按「单词边界」匹配（末尾 * 表示允许后缀，如 tariff* 命中 tariffs）：
+# 既大小写不敏感（demo 里的 "BESSENT … dovish" 同样计入「货币政策 · 美联储」），
+# 又不会让 FedEx 误命中 Fed。中文关键词按子串匹配。
+_POLICY_BUCKETS = [
+    ("货币政策 · 美联储", ["美联储", "Fed", "FOMC", "Powell", "鲍威尔", "贝森特", "Bessent", "议息",
+                          "利率决议", "点阵图", "美债收益率", "联邦基金利率", "鹰派", "鸽派",
+                          "hawkish", "dovish"]),
+    ("央行 · 流动性", ["央行", "中国人民银行", "PBOC", "CENTRAL BANK", "逆回购", "买断式", "净投放",
+                     "MLF", "LPR", "降准", "降息", "中期借贷", "再贷款", "流动性", "资金面", "Shibor"]),
+    ("汇率与外汇干预", ["汇率", "日元", "人民币", "yuan", "美元指数", "在岸", "离岸", "外汇干预",
+                       "弱日元", "套利交易", "抛美债", "yen", "fx"]),
+    ("财政 · 关税与债务", ["财政", "关税", "tariff*", "加征", "国债", "赤字", "deficit", "预算", "专项债",
+                         "特别国债", "债务上限", "退税", "减税"]),
+    ("产业与科技政策", ["产业政策", "补贴", "subsid*", "出口管制", "export control*", "国产替代", "自主可控",
+                       "强标", "准入", "白名单", "试点", "规划", "专项", "国家大基金", "反垄断", "antitrust",
+                       "数据中心设备"]),
+    ("资本市场监管", ["证监会", "CSRC", "吴清", "港交所", "交易所", "IPO", "发行上市", "内地企业香港上市",
+                     "退市", "股份回购", "股票回购", "分红", "减持", "增持", "立案", "监管", "regulator*", "合规", "信披",
+                     "新规", "征求意见"]),
+    ("地缘与贸易政策", ["伊朗", "Iran", "阿曼", "霍尔木兹", "制裁", "sanction*", "停火", "ceasefire", "谈判",
+                       "中东", "俄乌", "特朗普", "Trump", "白宫", "战争", "冲突", "禁止进口", "使馆"]),
+    ("地产与地方政策", ["楼市", "地产", "房价", "房企", "限购", "限售", "公积金", "城中村", "保障房", "收储"]),
+]
+
+# 政策取向词库：鹰派 = 收紧（对估值与利率敏感资产偏压制），鸽派 = 宽松 / 扶持（偏支撑）。
+_HAWKISH = ["鹰派", "加息", "缩表", "收紧", "维持高利率", "强硬", "加征关税", "制裁", "增额关税",
+            "限制", "禁止进口", "抛美债", "强势美元", "hawkish", "tighten*", "hike*", "sanction*", "tariff*"]
+_DOVISH = ["鸽派", "转鸽", "降息", "降准", "宽松", "扩表", "放水", "支持", "扶持", "补贴", "减税",
+           "退税", "豁免", "净流入", "流动性支持", "dovish", "easing", "stimulus", "rate cut*"]
+# 否定词：标题常用「不再那么鸽派」表述立场反转，命中否定词时把取向票翻转计到对面。
+# 「近指」只看紧邻的前两个字符（避免「美元不涨，鸽派升温」被误翻转），「远指」看前 24 字符。
+_POLICY_NEG_NEAR = ["不", "非", "未", "无"]
+_POLICY_NEG_FAR = ["不再", "不太", "并非", "难言", "谈不上", "no longer", "not ", "never", "without"]
+
+
+def _policy_norm(text: str) -> str:
+    """标题归一化：统一小写比较（中文不受影响），使英文关键词大小写不敏感。"""
+    return (text or "").lower()
+
+
+def _policy_findings(title_lower: str, keyword: str):
+    """逐个返回关键词在标题中的命中位置：ASCII 词按单词边界，中文按子串。"""
+    kw = keyword.lower()
+    if kw.isascii():
+        core = re.escape(kw[:-1] if kw.endswith("*") else kw)
+        tail = "" if kw.endswith("*") else r"(?![a-z0-9])"
+        pattern = re.compile(rf"(?<![a-z0-9]){core}{tail}")
+        for match in pattern.finditer(title_lower):
+            yield match.start()
+        return
+    start = 0
+    while True:
+        index = title_lower.find(kw, start)
+        if index == -1:
+            return
+        yield index
+        start = index + len(kw)
+
+
+def _policy_hit(title_lower: str, keyword: str) -> bool:
+    """关键词命中判定。"""
+    return next(_policy_findings(title_lower, keyword), None) is not None
+
+
+def _policy_tags(title_lower: str) -> list:
+    """返回标题命中的政策维度标签（保持 _POLICY_BUCKETS 顺序）。"""
+    return [tag for tag, keywords in _POLICY_BUCKETS
+            if any(_policy_hit(title_lower, keyword) for keyword in keywords)]
+
+
+def _policy_negated(title_lower: str, at: int) -> bool:
+    """判定 at 位置的政策词是否被否定词反转（「不再那么鸽派」= 鹰派）。"""
+    near = title_lower[max(0, at - 2):at]
+    if any(neg in near for neg in _POLICY_NEG_NEAR):
+        return True
+    far = title_lower[max(0, at - 24):at]
+    return any(neg in far for neg in _POLICY_NEG_FAR)
+
+
+def _policy_stance_votes(title_lower: str) -> tuple:
+    """统计单条标题的鹰派 / 鸽派票数：命中否定词的票翻转记到对面（如「不再那么鸽派」）。"""
+    hawk = dove = 0
+    for lexicon, side in ((_HAWKISH, "hawk"), (_DOVISH, "dove")):
+        for word in lexicon:
+            for at in _policy_findings(title_lower, word):
+                negated = _policy_negated(title_lower, at)
+                if side == "hawk":
+                    if negated:
+                        dove += 1
+                    else:
+                        hawk += 1
+                else:
+                    if negated:
+                        hawk += 1
+                    else:
+                        dove += 1
+    return hawk, dove
+
+
+def _policy_stance(hawk: int, dove: int) -> str:
+    """鹰派 / 鸽派命中数 → 政策取向标签（阈值与多空判定一致：60% / 40%）。"""
+    total = hawk + dove
+    if not total:
+        return "中性"
+    ratio = hawk / total
+    if ratio >= 0.6:
+        return "偏鹰"
+    if ratio <= 0.4:
+        return "偏鸽"
+    return "中性"
+
+
+def _policy_short(tag: str) -> str:
+    """政策维度标签简写（去掉「 · 美联储」这类后缀），用于总结句保持精炼。"""
+    return (tag or "").split(" · ")[0]
+
+
+
+def analyze_policy(brief: dict) -> dict:
+    """「AI 政策分析」引擎：政策维度热度 + 多空方向 + 鹰鸽取向（全部来自真实抓取标题）。
+
+    返回：
+        buckets      命中的政策维度（按热度排序），每项含 tag / stance / hawk / dove / up / down /
+                     net / mentions / sources / evidence[{title, source, url, direction, stance}]
+        top_themes   [(维度标签, 跨源数, 提及数)]，按 跨源数 → 提及数 排序
+        sectors      热度最高的政策维度标签（最多 2 个）
+        stance       整体政策取向：偏鹰 / 偏鸽 / 中性
+        hawk, dove   鹰派 / 鸽派命中条数（按 (来源, 标题) 去重）
+        bull, bear   政策面多方 / 空方信号条数（去重后）
+        mentions     政策面提及总条数（命中任一维度的去重标题数）
+        signals      参与统计的政策面多空信号总条数（= bull + bear）
+        sources_hit  出现政策面内容的数据源个数
+        up_tags / down_tags  政策净多 / 净空的维度标签（按净信号强度排序）
+        opportunity_buckets / pressure_buckets  上述两个方向的完整维度明细（供页面 / 简报取用）
+        headline     「AI 政策分析」总结句（纯文本，约 100 字）
+    """
+    tags = [tag for tag, _ in _POLICY_BUCKETS]
+    bucket_sources = {tag: set() for tag in tags}
+    bucket_mentions = {tag: 0 for tag in tags}
+    bucket_up = {tag: 0 for tag in tags}
+    bucket_down = {tag: 0 for tag in tags}
+    bucket_hawk = {tag: 0 for tag in tags}
+    bucket_dove = {tag: 0 for tag in tags}
+    bucket_evidence = {tag: [] for tag in tags}
+
+    seen = set()
+    hit_sources = set()
+    mentions = hawk = dove = bull = bear = 0
+
+    for name, items in (brief or {}).items():
+        for item in items or []:
+            title = item.get("title", "") or ""
+            if not title:
+                continue
+            title_lower = _policy_norm(title)
+            hits = _policy_tags(title_lower)
+            if not hits:
+                continue
+            # 多空：单条标题按「多方词命中数 vs 空方词命中数」判定方向。
+            up = sum(1 for word in _BULLISH if word in title)
+            down = sum(1 for word in _BEARISH if word in title)
+            direction = 1 if up > down else (-1 if down > up else 0)
+            # 取向：鹰派 / 鸽派票（否定前缀自动翻转，如「不再那么鸽派」计为鹰派）。
+            hawk_votes, dove_votes = _policy_stance_votes(title_lower)
+            is_hawk = hawk_votes > dove_votes
+            is_dove = dove_votes > hawk_votes
+            stance_label = "鹰派" if is_hawk else "鸽派" if is_dove else "中性"
+            key = (name, title)
+            if key not in seen:
+                # 整体口径按 (来源, 标题) 去重：同一条新闻命中多个维度只计一次热度。
+                seen.add(key)
+                mentions += 1
+                hit_sources.add(name)
+                hawk += int(is_hawk)
+                dove += int(is_dove)
+                if direction > 0:
+                    bull += 1
+                elif direction < 0:
+                    bear += 1
+            for tag in hits:
+                bucket_mentions[tag] += 1
+                bucket_sources[tag].add(name)
+                if direction > 0:
+                    bucket_up[tag] += 1
+                elif direction < 0:
+                    bucket_down[tag] += 1
+                bucket_hawk[tag] += max(hawk_votes - dove_votes, 0)
+                bucket_dove[tag] += max(dove_votes - hawk_votes, 0)
+                bucket_evidence[tag].append({
+                    "title": title,
+                    "source": name,
+                    "url": item.get("url") or "",
+                    "direction": direction,
+                    "stance": stance_label,
+                })
+
+    ranked = sorted(
+        ((tag, len(bucket_sources[tag]), bucket_mentions[tag]) for tag in tags),
+        key=lambda entry: (entry[1], entry[2]),
+        reverse=True,
+    )
+    top_themes = [(tag, src, men) for tag, src, men in ranked if men > 0]
+    sectors = [tag for tag, _, _ in top_themes[:2]]
+
+    def _bucket_entry(tag: str, want_dir: int, evidence_limit: int) -> dict:
+        """政策维度明细：热度 + 多空 + 鹰鸽取向 + 支撑证据（同方向优先，同源同题去重）。"""
+        evidence, seen_ev = [], set()
+        for ev in sorted(
+            bucket_evidence[tag],
+            key=lambda e: 0 if e["direction"] == want_dir else (1 if e["direction"] == 0 else 2),
+        ):  # 稳定排序：同方向内保持抓取顺序
+            key = (ev["source"], ev["title"])
+            if key in seen_ev:
+                continue
+            seen_ev.add(key)
+            evidence.append({k: ev[k] for k in ("title", "source", "url", "direction", "stance")})
+            if len(evidence) >= evidence_limit:
+                break
+        return {
+            "tag": tag,
+            "stance": _policy_stance(bucket_hawk[tag], bucket_dove[tag]),
+            "hawk": bucket_hawk[tag],
+            "dove": bucket_dove[tag],
+            "up": bucket_up[tag],
+            "down": bucket_down[tag],
+            "net": bucket_up[tag] - bucket_down[tag],
+            "mentions": bucket_mentions[tag],
+            "sources": len(bucket_sources[tag]),
+            "evidence": evidence,
+        }
+
+    buckets = [_bucket_entry(tag, 0, 3) for tag, _, _ in top_themes]
+    up_ranked = sorted(
+        (e for e in buckets if e["net"] > 0),
+        key=lambda e: (e["net"], e["sources"], e["mentions"]),
+        reverse=True,
+    )
+    down_ranked = sorted(
+        (e for e in buckets if e["net"] < 0),
+        key=lambda e: (-e["net"], e["sources"], e["mentions"]),
+        reverse=True,
+    )
+    data = {
+        "buckets": buckets,
+        "top_themes": top_themes,
+        "sectors": sectors,
+        "stance": _policy_stance(hawk, dove),
+        "hawk": hawk,
+        "dove": dove,
+        "bull": bull,
+        "bear": bear,
+        "signals": bull + bear,
+        "mentions": mentions,
+        "sources_hit": len(hit_sources),
+        "up_tags": [e["tag"] for e in up_ranked[:3]],
+        "down_tags": [e["tag"] for e in down_ranked[:2]],
+        "opportunity_buckets": up_ranked[:3],
+        "pressure_buckets": down_ranked[:2],
+    }
+    data["headline"] = _compose_policy_headline(data)
+    return data
+
+
+def _compose_policy_headline(data: dict) -> str:
+    """「AI 政策分析」总结句：政策主线 + 鹰鸽取向 + 利好 / 承压方向（约 100 字）。"""
+    if not data["top_themes"]:
+        return ("当日样本中暂无政策面信号命中（美联储、央行、关税、监管、地缘等关键词均未出现），"
+                "等待数据源刷新后再作判断，不做无依据的政策推演。")
+    names = "、".join(_policy_short(tag) for tag in data["sectors"])
+    stance, hawk, dove = data["stance"], data["hawk"], data["dove"]
+    if stance == "偏鹰":
+        tone = f"取向偏鹰（鹰派 {hawk} : 鸽派 {dove}），收紧预期压制高估值与利率敏感资产"
+    elif stance == "偏鸽":
+        tone = f"取向偏鸽（鸽派 {dove} : 鹰派 {hawk}），宽松与扶持预期对市场构成支撑"
+    else:
+        tone = f"鹰鸽拉锯（鹰派 {hawk} : 鸽派 {dove}），政策方向尚未明朗"
+    parts = [tone]
+    if data["up_tags"]:
+        parts.append(f"利好：{'、'.join(_policy_short(t) for t in data['up_tags'][:2])}")
+    if data["down_tags"]:
+        parts.append(f"承压：{'、'.join(_policy_short(t) for t in data['down_tags'][:2])}")
+    if data["signals"]:
+        parts.append(f"政策面多空 {data['bull']} : {data['bear']}")
+    summary = (f"政策面集中在「{names}」（{data['sources_hit']} 源命中 · {data['mentions']} 条提及），"
+               + "；".join(parts) + "。")
+    return summary + "建议关注政策信号的「转向确认」，而非单边押注。"
 
 
 # ---------------------------------------------------------------- 最新行情看盘引擎（A 股 / 港股 / 美股）
@@ -1949,6 +2250,70 @@ def build_html(
         f'<table class="tbl">{"".join(opp_rows)}</table></div>'
     )
 
+    # ── 「AI 政策分析」卡片：政策维度热度 + 鹰鸽取向 + 支撑新闻（与上两个板块共用同一批标题）──
+    policy = analysis["policy"]
+
+    def _hl_policy(text: str) -> str:
+        """政策维度标签在总结句里高亮：净空维度用下跌强调色，其余用荧光绿。
+
+        按标签长度从长到短替换，并跳过已被更长标签包住的短标签（如「货币政策」是
+        「货币政策 · 美联储」的前缀），避免嵌套 span 破坏推送 HTML。
+        """
+        escaped = _esc(text)
+        done = []
+        for entry in sorted(policy["buckets"], key=lambda e: -len(e["tag"])):
+            cls = "hl-d" if entry["net"] < 0 else "hl"
+            for needle in (_esc(entry["tag"]), _esc(_policy_short(entry["tag"]))):
+                if not needle or any(needle in prev for prev in done):
+                    continue
+                if needle in escaped:
+                    escaped = escaped.replace(needle, f'<span class="{cls}">{needle}</span>')
+                    done.append(needle)
+                    break
+        return escaped
+
+    policy_rows = [f'<tr><td colspan="2" class="td-hdr"><span class="tag">政策主线</span> '
+                   f'<span class="sub">按跨源命中 × 提及条数排序</span></td></tr>']
+    for rank, entry in enumerate(policy["buckets"][:4], 1):
+        stance = entry["stance"]
+        stance_cls = "tag-d" if stance == "偏鹰" else ("tag" if stance == "偏鸽" else "tag-w")
+        if entry["net"] > 0:
+            net_text, net_cls = f"政策净多 {entry['net']}", "tag"
+        elif entry["net"] < 0:
+            net_text, net_cls = f"政策净空 {-entry['net']}", "tag-d"
+        else:
+            net_text, net_cls = "政策中性", "tag-w"
+        head = (
+            f'<div><span class="tag">{_esc(entry["tag"])}</span> '
+            f'<span class="{stance_cls}">{stance}</span> '
+            f'<span class="{net_cls}">{net_text}</span> '
+            f'<span class="sub">{entry["sources"]} 源命中 · {entry["mentions"]} 条提及 · '
+            f'鹰派 {entry["hawk"]} : 鸽派 {entry["dove"]}</span></div>'
+        )
+        ev_rows = []
+        for ev in entry["evidence"][:2]:
+            mark = {"鹰派": "〔鹰〕", "鸽派": "〔鸽〕"}.get(ev.get("stance") or "", "")
+            ev_rows.append(
+                f'<div class="ev">· {_esc(ev.get("source") or "")}｜{mark}'
+                f'{_hl(_trunc(str(ev.get("title") or ""), 50))}</div>'
+            )
+        policy_rows.append(f'<tr><td class="td-n">{rank:02d}</td>'
+                           f'<td class="td-t">{head}{"".join(ev_rows)}</td></tr>')
+    if not policy["buckets"]:
+        policy_rows.append(
+            f'<tr><td colspan="2" class="sub" style="padding:6px 0;">'
+            f'当日样本中暂无政策面信号可统计，等待数据源刷新。</td></tr>'
+        )
+
+    policy_card = (
+        f'<div class="card"><div class="hdr"><span class="tag">AI 政策分析</span>'
+        f'<span class="sub">{policy["mentions"]} 条政策提及 · {policy["sources_hit"]} 个数据源</span></div>'
+        f'<div class="txt">{_hl_policy(policy["headline"])}</div>'
+        f'<table class="tbl-sub">{"".join(policy_rows)}</table>'
+        f'<div class="ftr">政策取向由鹰派 / 鸽派词库判定（否定表述自动反转，如「不再那么鸽派」计为鹰派）· '
+        f'与「AI 每日总结」「AI 板块机会」共用同一批抓取标题</div></div>'
+    )
+
     if review is None:
         review = analyze_ashare()
     if hk_review is None:
@@ -2099,6 +2464,7 @@ def build_html(
             f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内境外数据，由多个大模型混合部署。覆盖 {len(SOURCE_META)} 个数据源。</div></div>'
             f'<div class="card"><div class="hdr"><span class="tag">AI 每日总结</span></div><div class="txt">{headline}</div>{points_html}</div>'
             + opportunities_card
+            + policy_card
             + kanpan_card
             + f'<div class="card" style="background:{black};padding:8px;"><table width="100%"><tr>'
               f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;">{len(SOURCE_META)}<br><span style="color:#fff;font-size:10px;">数据源</span></td>'

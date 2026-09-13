@@ -260,6 +260,134 @@ class SectorOpportunityTest(unittest.TestCase):
         self.assertEqual(ana["signals"], 0)
 
 
+
+class PolicySectionTest(unittest.TestCase):
+    """「AI 政策分析」板块：政策维度热度 + 多空方向 + 鹰鸽取向（含否定翻转）。"""
+
+    def _brief(self, titles, src=("金十数据",)):
+        return {name: [{"title": t, "url": f"https://example.com/{i}"} for i, t in enumerate(titles)]
+                for name in src}
+
+    @staticmethod
+    def _kanpan():
+        """注入三市场快照，避免 HTML 测试打行情接口。"""
+        return dict(
+            review=sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT),
+            hk_review=sources.analyze_hk(market=sources._HK_SNAPSHOT),
+            us_review=sources.analyze_us(market=sources._US_SNAPSHOT),
+        )
+
+    def test_policy_buckets_heat_and_counts(self):
+        p = sources.analyze_policy(self._brief([
+            "美联储加息 25 个基点，缩表加速",
+            "央行开展 5000 亿元买断式逆回购，流动性净投放",
+            "美国拟对中国数据中心设备加征关税并实施出口管制",
+        ]))
+        tags = {b["tag"] for b in p["buckets"]}
+        self.assertIn("货币政策 · 美联储", tags)
+        self.assertIn("央行 · 流动性", tags)
+        self.assertIn("财政 · 关税与债务", tags)
+        fed = next(b for b in p["buckets"] if b["tag"] == "货币政策 · 美联储")
+        self.assertEqual(fed["sources"], 1)
+        self.assertEqual(fed["mentions"], 1)
+        self.assertEqual(p["sources_hit"], 1)
+        self.assertEqual(p["mentions"], 3)
+
+    def test_hawkish_vs_dovish_stance(self):
+        hawk = sources.analyze_policy(self._brief(["美联储鹰派发声：年内继续加息、维持缩表"]))
+        dove = sources.analyze_policy(self._brief(["央行宣布降准降息，释放流动性支持实体经济"]))
+        self.assertEqual(hawk["stance"], "偏鹰")
+        self.assertEqual(dove["stance"], "偏鸽")
+
+    def test_negation_flips_stance(self):
+        # 「不再那么鸽派」= 立场转鹰：否定词必须把票翻转，而不是按字面计入鸽派。
+        p = sources.analyze_policy(self._brief([
+            "“新美联储通讯社”：贝森特政策反应函数转向不再那么鸽派",
+            "Bessent policy reaction function shifts, no longer so dovish",
+        ]))
+        self.assertEqual(p["stance"], "偏鹰")
+        self.assertGreaterEqual(p["hawk"], 2)
+        self.assertEqual(p["dove"], 0)
+        fed = next(b for b in p["buckets"] if b["tag"] == "货币政策 · 美联储")
+        self.assertEqual(fed["evidence"][0]["stance"], "鹰派")
+
+    def test_ascii_keywords_need_word_boundary(self):
+        # FedEx / 含 fed 的普通单词不应被当成「美联储（Fed）」政策信号。
+        p = sources.analyze_policy(self._brief(["FedEx 季度营收超预期，上调全年指引"]))
+        self.assertEqual(p["mentions"], 0)
+        self.assertEqual(p["buckets"], [])
+        self.assertIn("暂无政策面信号", p["headline"])
+
+    def test_direction_and_pressure_split(self):
+        p = sources.analyze_policy(self._brief([
+            "央行降准降息，流动性宽松预期利好股市",
+            "伊朗海峡局势升级，制裁与战争风险警示",
+        ]))
+        self.assertIn("央行 · 流动性", p["up_tags"])
+        self.assertIn("地缘与贸易政策", p["down_tags"])
+        self.assertEqual(p["bull"], 1)
+        self.assertEqual(p["bear"], 1)
+        self.assertEqual(p["signals"], 2)
+
+    def test_cross_source_dedupe(self):
+        # 同一条新闻被多个源命中：整体提及按 (来源, 标题) 去重计 2 条，但热度只算 2 条独立来源。
+        p = sources.analyze_policy(self._brief(
+            ["美联储维持利率不变"], src=("金十数据", "财联社 电报")))
+        self.assertEqual(p["mentions"], 2)
+        self.assertEqual(p["sources_hit"], 2)
+        fed = next(b for b in p["buckets"] if b["tag"] == "货币政策 · 美联储")
+        self.assertEqual(fed["sources"], 2)
+
+    def test_empty_brief_is_honest(self):
+        p = sources.analyze_policy({})
+        self.assertEqual(p["buckets"], [])
+        self.assertEqual(p["mentions"], 0)
+        self.assertEqual(p["stance"], "中性")
+        self.assertIn("暂无政策面信号", p["headline"])
+        self.assertNotIn("偏鹰", p["headline"])
+
+    def test_demo_brief_has_policy_content(self):
+        brief = {name: sources._demo_items(name) for name in sources.SOURCES}
+        p = sources.analyze_policy(brief)
+        self.assertTrue(p["buckets"])
+        self.assertTrue(p["headline"])
+        self.assertLessEqual(len(p["headline"]), 200)
+
+    def test_analyze_brief_exposes_policy(self):
+        ana = sources.analyze_brief(self._brief(["美联储加息"]))
+        self.assertIn("policy", ana)
+        self.assertEqual(ana["policy"]["buckets"][0]["tag"], "货币政策 · 美联储")
+
+    def test_build_html_renders_policy_card(self):
+        brief = {
+            "华尔街见闻 快讯": [{"title": "“新美联储通讯社”：贝森特政策反应函数转向不再那么鸽派", "url": ""}],
+            "金十数据": [
+                {"title": "央行降准降息，流动性宽松利好成长板块", "url": ""},
+                {"title": "伊朗海峡危机升级，制裁风险警示", "url": ""},
+            ],
+        }
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("AI 政策分析", out)
+        self.assertIn("政策主线", out)
+        self.assertIn("政策净空", out)
+        self.assertIn("偏鹰", out)
+        self.assertIn("条政策提及", out)
+        # 位置：紧跟「AI 板块机会」，在「AI 看盘」之前。
+        self.assertLess(out.index("AI 板块机会"), out.index("AI 政策分析"))
+        self.assertLess(out.index("AI 政策分析"), out.index("AI 看盘"))
+
+    def test_build_html_policy_card_honest_when_no_signals(self):
+        out = sources.build_html({"金十数据": [{"title": "今天天气不错", "url": ""}]}, **self._kanpan())
+        self.assertIn("AI 政策分析", out)
+        self.assertIn("暂无政策面信号可统计", out)
+
+    def test_build_html_policy_evidence_is_escaped(self):
+        brief = {"金十数据": [{"title": "美联储：<script>alert(1)</script> 加息", "url": ""}]}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("&lt;script&gt;", out)
+        self.assertNotIn("<script>alert", out)
+
+
 class BuildHtmlTest(unittest.TestCase):
     def _kanpan(self):
         """注入三市场快照，避免 HTML 测试打行情接口，并让看盘内容可断言。"""

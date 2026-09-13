@@ -572,6 +572,37 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 .sector-evidence li { padding: 1px 0; word-break: break-all; }
 .sector-evidence .ev-src { color: var(--ink); }
 
+/* AI 政策分析卡片：总结句 + 鹰派 / 鸽派与净多空标记（与板块机会共用排版基线） */
+.policy-headline {
+  margin: 0 0 2px;
+  padding: 0 0 8px;
+  border-bottom: 1px dashed var(--rule);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.8;
+}
+
+.policy-headline mark {
+  padding: 1px 3px;
+  background: var(--black);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.policy-headline mark.press { background: #2a1210; color: #ff8d7e; }
+
+.stance-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.stance-tag.hawk { border-color: #6e332b; color: #ff8d7e; }
+
 .insight-meta { display: flex; gap: 6px; margin-bottom: 9px; flex-wrap: wrap; }
 
 .meta-tag {

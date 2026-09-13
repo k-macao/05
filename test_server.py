@@ -182,6 +182,7 @@ class MockedPushTest(unittest.TestCase):
                 self.assertIn("章鱼", payload["content"])
                 self.assertIn("数据源", payload["content"])
                 self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送
+                self.assertIn("AI 政策分析", payload["content"])  # 政策面板块（鹰鸽取向）同样随简报推送
             finally:
                 srv.terminate(); srv.wait(timeout=5)
                 mock.terminate(); mock.wait(timeout=5)
