@@ -178,6 +178,9 @@ class MockedPushTest(unittest.TestCase):
                 # 一对多推送：载荷必须带群组编码 oai.1。
                 self.assertEqual(payload["topic"], "oai.1")
                 self.assertIn("章鱼", payload["title"])
+                # 标题与脚本推送保持一致：章鱼 AI·全景分析（舆情因子分析）。
+                self.assertIn("舆情因子分析", payload["title"])
+                self.assertNotIn("市场因子分析", payload["title"])
                 # 推送内容为真实抓取的 18 个数据源 HTML 简报（网络不可用时回退演示数据）。
                 self.assertIn("章鱼", payload["content"])
                 self.assertIn("数据源", payload["content"])
