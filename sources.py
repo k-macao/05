@@ -2463,12 +2463,8 @@ def build_html(
         f'美股 {_esc(_source_label(us_review))}</div></div>'
     )
 
-    intro = (
-        "全网境内外为你寻找蛛丝马迹-提供全景视野分析。由多模型协同推理决策，"
-        "底层所使用的大语言模型（LLM）多模式背后结合使用了多种不同的先进模型，"
-        "包括但不限于 Claude、ChatGPT、Gemini、Grok、Qwen 以及 Kimi。"
-        "根据不同的资产管理任务需求，更好地发挥各个模型的优势来提供数据支持！[加油]"
-    )
+    # 正文末尾只保留免责声明与作者署名：原先的「调研方法」说明段（多模型协同推理、
+    # 模型清单那一大段注解文字）已按要求移除，推送内容与本地页面都不再展示。
     author = "作者：章鱼 ai　　仅供参考，分析研究"
 
     css = (
@@ -2547,7 +2543,6 @@ def build_html(
               f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;">18<br><span style="color:#fff;font-size:10px;">境内外视野</span></td>'
               f'</tr></table></div>'
             + "".join(source_cards)
-            + f'<div class="card" style="border-left:4px solid {black};"><span class="tag">调研方法</span><br><span class="sub" style="color:{ink};font-size:11px;">{_esc(intro)}</span></div>'
             + f'<div style="margin:8px 0 0;color:{muted};font-size:10px;text-align:center;">数据仅供参考，不构成投资建议</div>'
             + f'<div style="margin:6px 0 0;padding:6px 4px 0;border-top:1px solid {black};color:{black};font-size:10px;text-align:center;font-weight:700;">{_esc(author)}</div>'
             + '</div>'
