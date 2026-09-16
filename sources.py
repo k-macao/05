@@ -30,7 +30,8 @@
     default_fetch_limit() : 每个数据源默认抓取条数（与推送口径一致）
     check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
     collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
-    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（含「AI 政策分析」与 A 股 / 港股 / 美股「AI 看盘」）
+    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（含「AI 政策分析」与 A 股 / 港股 / 美股「AI 看盘」，
+                         正文最后追加「全网快讯」列表：每源 3 条、跨源去重、不标注来源）
 """
 from __future__ import annotations
 
@@ -2152,6 +2153,15 @@ def _trunc(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _news_key(title: str) -> str:
+    """快讯标题指纹：忽略大小写、空白与标点，用于跨源去重。
+
+    末尾的「全网快讯」列表不标注来源，同一条新闻被多个源转载时若重复出现会很扎眼，
+    因此按指纹只保留首次出现的那一条。
+    """
+    return re.sub(r"[\s\W_]+", "", (title or "").lower())
+
+
 # PushPlus 单条推送字符上限：会员 10 万字、普通账号 2 万字。这里各留 2,000 字符安全余量
 # （HTML 标签本身也计字符，避免刚好卡在服务端阈值上被拒）。
 PUSHPLUS_MEMBER_MAX_CHARS = 98000       # 10 万字口径
@@ -2159,6 +2169,9 @@ PUSHPLUS_FREE_MAX_CHARS = 19500         # 2 万字口径
 PUSHPLUS_MEMBER_MAX_ITEMS_PER_SOURCE = 20   # 会员口径：每个数据源最多 20 条
 PUSHPLUS_FREE_MAX_ITEMS_PER_SOURCE = 3      # 普通口径：精选前 3 条
 PUSHPLUS_MEMBER_DEFAULT = True          # 默认按 10 万字口径出全量内容
+# 正文末尾「全网快讯」列表：每个数据源固定保留 3 条，只显示标题、不标注来源（隐藏源头）。
+# 推送字符上限不够时由 build_html() 自动收敛到 2 条 / 1 条，最后整段省略，保证发得出去。
+NEWS_ITEMS_PER_SOURCE = 3
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -2234,7 +2247,11 @@ def build_html(
     ``review`` 为 A 股看盘结果；缺省时自动调用 analyze_ashare()（实时采集 → 快照兜底）。
     ``hk_review`` / ``us_review`` 为港股、美股看盘结果；缺省时分别调用 analyze_hk() / analyze_us()。
     ``max_items_per_source`` / ``max_length`` 参数保留用于兼容既有调用与推送容量配置；
-    正文只输出分析栏目，不展示监测平台清单、原始快讯矩阵、时间核对或推送协议说明。
+    正文以四个分析栏目为主，不展示监测平台清单、时间核对或推送协议说明。
+    **正文最后（免责声明与作者署名之前）追加「全网快讯」列表**：每个数据源固定保留
+    :data:`NEWS_ITEMS_PER_SOURCE`（3）条，按源顺序取每源前 3 条并跨源去重，
+    **只列标题、不标注来源（隐藏源头）**；``max_length`` 不够时自动收敛到每源 2 / 1 条，
+    最后整段省略，保证推送始终在 PushPlus 字符上限内。
     抓取条数仍由 :func:`pushplus_quota` 统一控制，保证任何账号类型都能发出去、不被
     PushPlus 拒收。
     """
@@ -2448,8 +2465,8 @@ def build_html(
         f'{_market_block(us_review, "美股")}</div>'
     )
 
-    # 正文末尾只保留免责声明与作者署名：原先的「调研方法」说明段（多模型协同推理、
-    # 模型清单那一大段注解文字）已按要求移除，推送内容与本地页面都不再展示。
+    # 「全网快讯」列表之后只保留免责声明与作者署名：原先的「调研方法」说明段
+    # （多模型协同推理、模型清单那一大段注解文字）已按要求移除，推送内容与本地页面都不再展示。
     author = "作者：章鱼 ai　　仅供参考，分析研究"
 
     css = (
@@ -2487,9 +2504,46 @@ def build_html(
         f'</style>'
     )
 
+    def _news_card(per_source: int) -> str:
+        """正文最后的「全网快讯」列表：每源最多 ``per_source`` 条，只显示标题、隐藏来源。
+
+        - 按数据源顺序取每源前 ``per_source`` 条，再跨源去重（同一条新闻被多源转载只留一条）；
+        - 不输出来源名称、也不带跳转链接，避免任何形式暴露源头；
+        - ``per_source`` 为 0 或当天没有任何快讯时整段省略，不占推送字符额度。
+        """
+        if per_source <= 0:
+            return ""
+        names = [name for name in SOURCES if name in brief]
+        names += [name for name in brief if name not in SOURCES]
+        rows, seen = [], set()
+        for name in names:
+            for item in (brief.get(name) or [])[:per_source]:
+                title = str((item or {}).get("title") or "").strip()
+                if not title:
+                    continue
+                key = _news_key(title)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    f'<tr><td class="td-n">{len(rows) + 1:02d}</td>'
+                    f'<td class="td-t">{_hl(_trunc(title, 60))}</td></tr>'
+                )
+        if not rows:
+            return ""
+        return (
+            f'<div class="card"><div class="hdr"><span class="tag">全网快讯</span>'
+            f'<span class="sub">境内 × 境外 · 每源精选 {per_source} 条 · 共 {len(rows)} 条</span></div>'
+            f'<table class="tbl">{"".join(rows)}</table>'
+            f'<div class="ftr">按数据源顺序取每源前 {per_source} 条、跨源去重后统一列出，不标注具体来源。</div></div>'
+        )
+
     def _render_full(max_per_src: int | None) -> str:
-        # 只输出分析栏目；监测平台清单、原始快讯矩阵与数量遥测不进入正文。
-        # ``max_per_src`` 保留在内部签名中，兼容已有调用和容量参数。
+        # 四个分析栏目 + 正文最后的「全网快讯」列表；监测平台清单与数量遥测不进入正文。
+        # ``max_per_src`` 为本次容量口径允许的每源条数，快讯列表最多 3 条，
+        # 容量不够时随收敛档位降到 2 / 1 条，为 0 时整段省略。
+        per_source = (NEWS_ITEMS_PER_SOURCE if max_per_src is None
+                      else min(max_per_src, NEWS_ITEMS_PER_SOURCE))
         return (
             f'{css}<div class="bg">'
             f'<div class="card-m">'
@@ -2500,6 +2554,7 @@ def build_html(
             + opportunities_card
             + policy_card
             + kanpan_card
+            + _news_card(per_source)
             + f'<div style="margin:8px 0 0;color:{muted};font-size:10px;text-align:center;">数据仅供参考，不构成投资建议</div>'
             + f'<div style="margin:6px 0 0;padding:6px 4px 0;border-top:1px solid {black};color:{black};font-size:10px;text-align:center;font-weight:700;">{_esc(author)}</div>'
             + '</div>'
@@ -2507,10 +2562,11 @@ def build_html(
 
     out = _render_full(max_items_per_source)
     if len(out) > max_length:
-        # 逐级收敛每源条数；跳过不小于当前上限的档位，避免重复渲染同一结果。
-        for limit in (15, 12, 10, 8, 6, 5, 4, 3, 2, 1):
-            if max_items_per_source is not None and limit >= max_items_per_source:
-                continue
+        # 快讯列表是唯一可压缩的部分：从「每源 3 条」往下逐级收敛到 2 / 1 条，
+        # 最后整段省略（0），保证任何账号口径都能发得出去；分析栏目始终保留。
+        cap = (NEWS_ITEMS_PER_SOURCE if max_items_per_source is None
+               else min(max_items_per_source, NEWS_ITEMS_PER_SOURCE))
+        for limit in range(cap - 1, -1, -1):
             out = _render_full(limit)
             if len(out) <= max_length:
                 break

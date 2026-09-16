@@ -2,3 +2,5 @@
 pushplus_record.json
 __pycache__/
 *.pyc
+# 本地预览用：由 sources.build_html() 渲染出的推送 HTML 快照
+brief-preview.html

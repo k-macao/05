@@ -465,18 +465,66 @@ class BuildHtmlTest(unittest.TestCase):
         out = sources.build_html(huge_brief, **self._kanpan())
         self.assertLessEqual(len(out), 98000)
 
-    def test_build_html_default_quota_is_100k_without_source_cards(self):
-        # 默认仍按会员口径抓取（10 万字 / 每源 20 条），但原始来源卡片不进入正文。
+    def test_build_html_default_quota_lists_three_per_source(self):
+        # 默认仍按会员口径抓取（10 万字 / 每源 20 条），正文最后的「全网快讯」固定每源 3 条。
         self.assertEqual(sources.pushplus_quota(), (98000, 20))
         self.assertEqual(sources.default_fetch_limit(), sources.LIMIT_MEMBER)
-        brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
+        self.assertEqual(sources.NEWS_ITEMS_PER_SOURCE, 3)
+        brief = {name: [{"title": f"快讯标题第 {i} 条", "url": ""} for i in range(8)]
                  for name in sources.SOURCES}
         out = sources.build_html(brief, **self._kanpan())
-        self.assertNotIn("金十数据 第 7 条快讯", out)
+        for kept in ("快讯标题第 0 条", "快讯标题第 1 条", "快讯标题第 2 条"):
+            self.assertIn(kept, out)
+        for dropped in ("快讯标题第 3 条", "快讯标题第 7 条"):
+            self.assertNotIn(dropped, out)
         self.assertIn("不构成投资建议", out)
 
+    def test_build_html_news_list_is_last_and_hides_sources(self):
+        # 「全网快讯」列在正文最后（免责声明与作者署名之前），且整段不出现任何数据源名称。
+        # 标题用「源序号-条序」编号，保证跨源不重复，同时不含任何来源名。
+        brief = {name: [{"title": f"中立标题 {si}-{i}", "url": f"https://example.com/{si}-{i}"}
+                        for i in range(5)] for si, name in enumerate(sources.SOURCES)}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("全网快讯", out)
+        # 位置：AI 看盘之后、免责声明与作者署名之前。
+        self.assertLess(out.index("AI 看盘"), out.index("全网快讯"))
+        self.assertLess(out.index("全网快讯"), out.index("不构成投资建议"))
+        self.assertLess(out.index("全网快讯"), out.index("作者：章鱼 ai"))
+        card = out[out.index("全网快讯"):]
+        for name in sources.SOURCES:
+            self.assertNotIn(name, card)
+        # 不带跳转链接，避免域名反向暴露来源。
+        self.assertNotIn("<a ", card)
+        self.assertNotIn("example.com", card)
+
+    def test_build_html_news_list_dedupes_across_sources(self):
+        # 来源被隐藏后，同一条新闻被多源转载只列一次。
+        dup = "现货黄金上涨超过7%，报1745.93美元/盎司"
+        brief = {
+            "金十数据": [{"title": dup, "url": ""}, {"title": "金十独家标题", "url": ""}],
+            "财联社 电报": [{"title": dup.replace("，", ", "), "url": ""}, {"title": "财联社独家标题", "url": ""}],
+        }
+        out = sources.build_html(brief, **self._kanpan())
+        card = out[out.index("全网快讯"):]
+        self.assertEqual(card.count("现货黄金上涨超过7%"), 1)
+        self.assertIn("金十独家标题", card)
+        self.assertIn("财联社独家标题", card)
+
+    def test_build_html_news_list_omitted_when_brief_empty(self):
+        out = sources.build_html({}, **self._kanpan())
+        self.assertNotIn("全网快讯", out)
+        self.assertIn("作者：章鱼 ai", out)
+
+    def test_build_html_news_list_titles_are_escaped(self):
+        brief = {"金十数据": [{"title": "<b>x</b> 快讯标题 <script>alert(1)</script>", "url": ""}]}
+        out = sources.build_html(brief, **self._kanpan())
+        card = out[out.index("全网快讯"):]
+        self.assertIn("&lt;script&gt;", card)
+        self.assertNotIn("<script>alert", card)
+        self.assertNotIn("<b>x</b>", card)
+
     def test_build_html_free_mode_still_capped_at_20k(self):
-        # 显式 PUSHPLUS_MEMBER=0 仍退回普通账号口径：抓取/容量上限 19,500 字符、每源精选 3 条；正文不展示来源卡片。
+        # 显式 PUSHPLUS_MEMBER=0 仍退回普通账号口径：抓取/容量上限 19,500 字符、快讯每源精选 3 条。
         os.environ["PUSHPLUS_MEMBER"] = "0"
         try:
             self.assertFalse(sources._is_pushplus_member())
@@ -489,11 +537,15 @@ class BuildHtmlTest(unittest.TestCase):
             }
             out = sources.build_html(huge_brief, **self._kanpan())
             self.assertLessEqual(len(out), 19500)
-            brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
+            # 快讯列表仍然在正文最后，且每源只保留 3 条。
+            self.assertIn("全网快讯", out)
+            brief = {name: [{"title": f"免费口径快讯第 {i} 条", "url": ""} for i in range(8)]
                      for name in sources.SOURCES}
             out2 = sources.build_html(brief, **self._kanpan())
-            self.assertNotIn("金十数据 第 2 条快讯", out2)
-            self.assertNotIn("金十数据 第 3 条快讯", out2)
+            self.assertLessEqual(len(out2), 19500)
+            for kept in ("免费口径快讯第 0 条", "免费口径快讯第 1 条", "免费口径快讯第 2 条"):
+                self.assertIn(kept, out2)
+            self.assertNotIn("免费口径快讯第 3 条", out2)
         finally:
             os.environ.pop("PUSHPLUS_MEMBER", None)
 
@@ -518,12 +570,21 @@ class BuildHtmlTest(unittest.TestCase):
             for key in ("PUSHPLUS_MAX_CHARS", "PUSHPLUS_ITEMS_PER_SOURCE", "BRIEF_FETCH_LIMIT"):
                 os.environ.pop(key, None)
 
-    def test_raw_source_rows_are_not_rendered(self):
-        # 04「监测平台列表与雷达矩阵」移除后，不应生成原始来源行。
-        brief = {name: [{"title": f"唯一原始标题 {i}", "url": ""} for i in range(3)] for name in sources.SOURCES}
+    def test_raw_source_cards_replaced_by_anonymous_news_list(self):
+        # 04「监测平台列表与雷达矩阵」仍不渲染；原始快讯改为正文最后的匿名列表（每源 3 条）。
+        brief = {name: [{"title": f"唯一原始标题 {si}-{i}", "url": ""} for i in range(3)]
+                 for si, name in enumerate(sources.SOURCES)}
         out = sources.build_html(brief, **self._kanpan())
-        self.assertNotIn("唯一原始标题", out)
+        self.assertIn("唯一原始标题", out)
+        self.assertNotIn("覆盖 18 个数据源", out)
         self.assertNotIn('class="td-n td-bdr"', out)
+        # 18 源 × 3 条 = 54 行，编号连续且不带来源名。
+        self.assertEqual(out.count("唯一原始标题"), 54)
+        self.assertIn("共 54 条", out)
+        self.assertIn(">54</td>", out)
+        card = out[out.index("全网快讯"):]
+        for name in sources.SOURCES:
+            self.assertNotIn(name, card)
 
     def test_build_html_custom_max_chars_shrinks_items(self):
         # 自定义较小上限时仍保证生成内容不超出推送限制。
@@ -532,6 +593,25 @@ class BuildHtmlTest(unittest.TestCase):
         out_small = sources.build_html(brief, max_length=24000, **self._kanpan())
         self.assertLessEqual(len(out_small), 24000)
         self.assertIn("AI 政策分析", out_small)   # AI 板块始终保留，只收敛快讯列表
+
+    def test_build_html_shrinks_news_list_before_dropping_it(self):
+        # 字符额度越紧，快讯列表逐级收敛：3 条 → 2 条 → 1 条 → 整段省略；分析栏目始终保留。
+        brief = {name: [{"title": f"快讯条目 {si}-{i}：撑开字符额度的较长标题内容示例文本", "url": ""}
+                        for i in range(20)] for si, name in enumerate(sources.SOURCES)}
+        full = sources.build_html(brief, **self._kanpan())
+        self.assertEqual(full.count("快讯条目"), 18 * 3)
+        two = sources.build_html(brief, max_length=len(full) - 100, **self._kanpan())
+        self.assertEqual(two.count("快讯条目"), 18 * 2)
+        one = sources.build_html(brief, max_length=len(two) - 100, **self._kanpan())
+        self.assertEqual(one.count("快讯条目"), 18)
+        none = sources.build_html(brief, max_length=len(one) - 100, **self._kanpan())
+        self.assertNotIn("全网快讯", none)
+        self.assertNotIn("快讯条目", none)
+        for out in (two, one, none):
+            self.assertIn("AI 每日总结", out)
+            self.assertIn("AI 政策分析", out)
+            self.assertIn("AI 看盘", out)
+            self.assertIn("作者：章鱼 ai", out)
 
 
 class AshareReviewTest(unittest.TestCase):
