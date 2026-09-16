@@ -74,9 +74,12 @@ def main():
     print(f"诊断：PUSHPLUS_TOKEN 长度={len(token)}", flush=True)
     max_chars, items_per_source = sources.pushplus_quota()
     tier = "会员 10 万字" if sources._is_pushplus_member() else "普通账号 2 万字"
-    items_desc = "展示全量快讯" if items_per_source is None else f"每源最多展示 {items_per_source} 条"
+    # 正文最后的「全网快讯」列表固定每源 3 条（隐藏来源）；推送口径只能把条数往下压。
+    news_per_source = (sources.NEWS_ITEMS_PER_SOURCE if items_per_source is None
+                       else min(items_per_source, sources.NEWS_ITEMS_PER_SOURCE))
     print(f"诊断：推送容量 {max_chars:,} 字符（{tier}上限，各留 2,000 安全余量）· "
-          f"{items_desc} · 每源抓取 {sources.default_fetch_limit()} 条", flush=True)
+          f"正文末尾快讯每源 {news_per_source} 条（不标注来源）· "
+          f"每源抓取 {sources.default_fetch_limit()} 条", flush=True)
     if not sources._is_pushplus_member():
         print("诊断：检测到 PUSHPLUS_MEMBER=0，已按普通账号 2 万字精选口径生成；"
               "删除该变量即恢复 10 万字全量推送", flush=True)
