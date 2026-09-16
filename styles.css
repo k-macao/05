@@ -720,18 +720,7 @@ footer {
   line-height: 1.75;
 }
 
-footer .method-tag {
-  display: inline-block;
-  margin: 0 0 7px;
-  padding: 2px 5px;
-  background: var(--black);
-  color: var(--green);
-  font-size: 10px;
-  line-height: 1.4;
-  letter-spacing: 1px;
-}
-
-footer p { margin: 0 0 11px; text-align: left; }
+/* 「调研方法」说明段已移除，footer 只剩作者署名，相关 .method-tag / footer p 样式一并删除 */
 footer strong { display: block; color: var(--ink); text-align: center; font-size: 11px; }
 
 /* Toast */
