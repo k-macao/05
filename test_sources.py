@@ -397,11 +397,12 @@ class BuildHtmlTest(unittest.TestCase):
             us_review=sources.analyze_us(market=sources._US_SNAPSHOT),
         )
 
-    def test_build_html_contains_sources_and_items(self):
+    def test_build_html_omits_monitoring_list_and_keeps_disclaimer(self):
         brief = {name: sources._demo_items(name)[:2] for name in sources.SOURCES}
         out = sources.build_html(brief, **self._kanpan())
-        self.assertIn("覆盖 18 个数据源", out)
-        self.assertIn("金十数据", out)
+        # 04「监测平台列表与雷达矩阵」不再作为原始来源卡片输出。
+        self.assertNotIn("覆盖 18 个数据源", out)
+        self.assertNotIn("金十数据 第", out)
         self.assertIn("不构成投资建议", out)
 
     def test_build_html_renders_four_viewpoints(self):
@@ -452,7 +453,7 @@ class BuildHtmlTest(unittest.TestCase):
 
     def test_escapes_html(self):
         out = sources.build_html({"金十数据": [{"title": "<b>x</b>", "url": ""}]}, **self._kanpan())
-        self.assertIn("&lt;b&gt;", out)
+        # 原始来源条目不进入正文，因此也不会把未转义的 HTML 带入推送。
         self.assertNotIn("<b>x</b>", out)
 
     def test_build_html_length_under_pushplus_limit(self):
@@ -464,18 +465,18 @@ class BuildHtmlTest(unittest.TestCase):
         out = sources.build_html(huge_brief, **self._kanpan())
         self.assertLessEqual(len(out), 98000)
 
-    def test_build_html_default_quota_is_100k_full_items(self):
-        # 默认即为会员口径（10 万字 / 每源 20 条）：每个源都出现在简报里，不再被精选 3 条截断。
+    def test_build_html_default_quota_is_100k_without_source_cards(self):
+        # 默认仍按会员口径抓取（10 万字 / 每源 20 条），但原始来源卡片不进入正文。
         self.assertEqual(sources.pushplus_quota(), (98000, 20))
         self.assertEqual(sources.default_fetch_limit(), sources.LIMIT_MEMBER)
         brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
                  for name in sources.SOURCES}
         out = sources.build_html(brief, **self._kanpan())
-        self.assertIn("金十数据 第 7 条快讯", out)     # 第 8 条也在（普通口径只展示前 3 条）
+        self.assertNotIn("金十数据 第 7 条快讯", out)
         self.assertIn("不构成投资建议", out)
 
     def test_build_html_free_mode_still_capped_at_20k(self):
-        # 显式 PUSHPLUS_MEMBER=0 退回普通账号口径：上限 19,500 字符、每源精选 3 条。
+        # 显式 PUSHPLUS_MEMBER=0 仍退回普通账号口径：抓取/容量上限 19,500 字符、每源精选 3 条；正文不展示来源卡片。
         os.environ["PUSHPLUS_MEMBER"] = "0"
         try:
             self.assertFalse(sources._is_pushplus_member())
@@ -491,8 +492,8 @@ class BuildHtmlTest(unittest.TestCase):
             brief = {name: [{"title": f"{name} 第 {i} 条快讯", "url": ""} for i in range(8)]
                      for name in sources.SOURCES}
             out2 = sources.build_html(brief, **self._kanpan())
-            self.assertIn("金十数据 第 2 条快讯", out2)
-            self.assertNotIn("金十数据 第 3 条快讯", out2)  # 精选口径只展示前 3 条
+            self.assertNotIn("金十数据 第 2 条快讯", out2)
+            self.assertNotIn("金十数据 第 3 条快讯", out2)
         finally:
             os.environ.pop("PUSHPLUS_MEMBER", None)
 
@@ -517,16 +518,15 @@ class BuildHtmlTest(unittest.TestCase):
             for key in ("PUSHPLUS_MAX_CHARS", "PUSHPLUS_ITEMS_PER_SOURCE", "BRIEF_FETCH_LIMIT"):
                 os.environ.pop(key, None)
 
-    def test_source_rows_class_attr_is_well_formed(self):
-        # 回归：数据源行曾拼出 class="td-n class="td-bdr""（嵌套属性），分隔线样式失效。
-        brief = {name: [{"title": f"标题 {i}", "url": ""} for i in range(3)] for name in sources.SOURCES}
+    def test_raw_source_rows_are_not_rendered(self):
+        # 04「监测平台列表与雷达矩阵」移除后，不应生成原始来源行。
+        brief = {name: [{"title": f"唯一原始标题 {i}", "url": ""} for i in range(3)] for name in sources.SOURCES}
         out = sources.build_html(brief, **self._kanpan())
-        self.assertNotIn('class="td-bdr"', out)
-        self.assertIn('class="td-n td-bdr"', out)
-        self.assertEqual(out.count('class="td-t td-bdr"'), 18 * 2)
+        self.assertNotIn("唯一原始标题", out)
+        self.assertNotIn('class="td-n td-bdr"', out)
 
     def test_build_html_custom_max_chars_shrinks_items(self):
-        # 自定义较小上限时按每源条数逐级收敛，保证内容仍能发出去。
+        # 自定义较小上限时仍保证生成内容不超出推送限制。
         brief = {name: [{"title": f"{name} 的快讯标题内容示例" * 2, "url": ""} for _ in range(20)]
                  for name in sources.SOURCES}
         out_small = sources.build_html(brief, max_length=24000, **self._kanpan())
@@ -715,7 +715,9 @@ class AshareReviewTest(unittest.TestCase):
         us_review = sources.analyze_us(market=sources._US_SNAPSHOT)
         out = sources.build_html(brief, review=review, hk_review=hk_review, us_review=us_review)
         self.assertIn("AI 看盘", out)
-        self.assertIn(sources._ASHARE_SNAPSHOT["date"], out)
+        # 05「数据获取与时间核对」不进入正文；行情分析本身仍保留。
+        self.assertNotIn(sources._ASHARE_SNAPSHOT["date"], out)
+        self.assertNotIn("东方财富行情接口", out)
         for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
                       "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"):
             self.assertIn(label, out)

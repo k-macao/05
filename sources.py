@@ -2233,13 +2233,10 @@ def build_html(
     ``now`` 保留在接口中以兼容现有调用，但报告标题不展示推送时间。
     ``review`` 为 A 股看盘结果；缺省时自动调用 analyze_ashare()（实时采集 → 快照兜底）。
     ``hk_review`` / ``us_review`` 为港股、美股看盘结果；缺省时分别调用 analyze_hk() / analyze_us()。
-    ``max_items_per_source`` 控制每个数据源卡片展示的最大条数。未指定时按
-    :func:`pushplus_quota` 的口径取值：默认（会员口径）每源最多 20 条、单条推送
-    上限 98,000 字符（10 万字留 2,000 余量）；显式设 ``PUSHPLUS_MEMBER=0`` 退回
-    普通账号口径——精选前 3 条、上限 19,500 字符（2 万字留余量）。
-    ``max_length`` 字符上限，未指定时同样取 ``pushplus_quota()`` 的字符上限。
-    超上限时按每源条数逐级收敛（20 → 15 → 12 → 10 → 8 → 6 → 5 → 4 → 3 → 2 → 1），
-    保证任何账号类型都能发出去、不被 PushPlus 拒收。
+    ``max_items_per_source`` / ``max_length`` 参数保留用于兼容既有调用与推送容量配置；
+    正文只输出分析栏目，不展示监测平台清单、原始快讯矩阵、时间核对或推送协议说明。
+    抓取条数仍由 :func:`pushplus_quota` 统一控制，保证任何账号类型都能发出去、不被
+    PushPlus 拒收。
     """
     quota_max_length, quota_items_per_source = pushplus_quota()
     if max_items_per_source is None:
@@ -2256,8 +2253,6 @@ def build_html(
     muted = "#626a61"
     rule = "#c8cec5"
     danger_hi = "#ff6b5c"    # 黑底上的下跌强调色
-    total = sum(len(items or []) for items in brief.values())
-
     analysis = analyze_brief(brief)
     hl_tags = list(dict.fromkeys(
         analysis["sectors"] + analysis["sectors_up"] + analysis["sectors_down"]
@@ -2408,12 +2403,6 @@ def build_html(
             escaped = escaped.replace(tag, _chip(tag, "hl-d"))
         return escaped
 
-    def _source_label(block: dict) -> str:
-        return {
-            "eastmoney": "东方财富行情接口",
-            "tencent": "腾讯证券行情接口（备用）",
-        }.get(block.get("source"), "内置真实快照")
-
     def _market_block(block: dict, market_name: str, first: bool = False) -> str:
         bias = block.get("bias") or "中性"
         bias_cls = "tag" if bias == "偏多" else ("tag-d" if bias == "偏空" else "tag-w")
@@ -2446,8 +2435,7 @@ def build_html(
         review_rows_html = f'<table class="tbl-sub">' + "".join(review_rows) + "</table>"
         return (
             f'<div class="mkt-block{wrap}">'
-            f'<div class="mkt-h"><span class="tag">{_esc(market_name)}</span> {bias_pill} '
-            f'<span class="sub">{_esc(block.get("date") or "")}</span></div>'
+            f'<div class="mkt-h"><span class="tag">{_esc(market_name)}</span> {bias_pill}</div>'
             f'<div class="txt">{_hl_review(block.get("headline") or "", block)}</div>'
             f'{index_strip}{review_rows_html}</div>'
         )
@@ -2457,10 +2445,7 @@ def build_html(
         f'<span class="sub">A股 · 港股 · 美股</span></div>'
         f'{_market_block(review, "A 股", first=True)}'
         f'{_market_block(hk_review, "港股")}'
-        f'{_market_block(us_review, "美股")}'
-        f'<div class="ftr">行情数据：A股 {_esc(_source_label(review))} · '
-        f'港股 {_esc(_source_label(hk_review))} · '
-        f'美股 {_esc(_source_label(us_review))}</div></div>'
+        f'{_market_block(us_review, "美股")}</div>'
     )
 
     # 正文末尾只保留免责声明与作者署名：原先的「调研方法」说明段（多模型协同推理、
@@ -2503,46 +2488,18 @@ def build_html(
     )
 
     def _render_full(max_per_src: int | None) -> str:
-        source_cards = []
-        for index, meta in enumerate(SOURCE_META, 1):
-            raw_items = brief.get(meta["name"], []) or []
-            items = raw_items[:max_per_src] if max_per_src is not None else raw_items
-            rows = []
-            for item_index, item in enumerate(items, 1):
-                title = _trunc(str(item.get("title", "")), 75)
-                url = item.get("url") or ""
-                title_html = f'<a href="{_esc(url)}" class="lnk">{title}</a>' if url else title
-                # 只填 class 值（早先写成 'class="td-bdr"' 会拼出嵌套 class 属性，边框样式失效）。
-                bdr = 'td-bdr' if item_index < len(items) else ''
-                rows.append(
-                    f'<tr><td class="td-n{(" " + bdr) if bdr else ""}">{item_index:02d}</td>'
-                    f'<td class="td-t{(" " + bdr) if bdr else ""}">{title_html}</td></tr>'
-                )
-            if not rows:
-                rows.append(f'<tr><td colspan="2" class="sub">暂未抓取到内容</td></tr>')
-            source_cards.append(
-                f'<div class="card"><div class="hdr">'
-                f'<span class="tag">{index:02d} · {_esc(meta["name"])}</span>'
-                f'<span class="sub">{len(raw_items)} 条</span></div>'
-                f'<table class="tbl">{"".join(rows)}</table></div>'
-            )
-
+        # 只输出分析栏目；监测平台清单、原始快讯矩阵与数量遥测不进入正文。
+        # ``max_per_src`` 保留在内部签名中，兼容已有调用和容量参数。
         return (
             f'{css}<div class="bg">'
             f'<div class="card-m">'
             f'<div style="color:{neon_green};font-size:10px;margin-bottom:3px;">全网 AI 调研　/　境内 × 境外</div>'
             f'<div style="color:{neon_green};font-size:20px;font-weight:800;">章鱼 AI 全景分析</div>'
-            f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内境外数据，由多个大模型混合部署。覆盖 {len(SOURCE_META)} 个数据源。</div></div>'
+            f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内外数据，由多个大模型混合部署。</div></div>'
             f'<div class="card"><div class="hdr"><span class="tag">AI 每日总结</span></div><div class="txt">{headline}</div>{points_html}</div>'
             + opportunities_card
             + policy_card
             + kanpan_card
-            + f'<div class="card" style="background:{black};padding:8px;"><table width="100%"><tr>'
-              f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;">{len(SOURCE_META)}<br><span style="color:#fff;font-size:10px;">数据源</span></td>'
-              f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;border-left:1px solid #3d463b;border-right:1px solid #3d463b;">{total}<br><span style="color:#fff;font-size:10px;">条快讯</span></td>'
-              f'<td align="center" style="width:33%;color:{neon_green};font-size:16px;font-weight:700;">18<br><span style="color:#fff;font-size:10px;">境内外视野</span></td>'
-              f'</tr></table></div>'
-            + "".join(source_cards)
             + f'<div style="margin:8px 0 0;color:{muted};font-size:10px;text-align:center;">数据仅供参考，不构成投资建议</div>'
             + f'<div style="margin:6px 0 0;padding:6px 4px 0;border-top:1px solid {black};color:{black};font-size:10px;text-align:center;font-weight:700;">{_esc(author)}</div>'
             + '</div>'
