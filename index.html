@@ -28,7 +28,7 @@
 
     <div class="pixel-status" id="statusBar" role="status" aria-live="polite">
       <span class="pixel-dot ok"></span>
-      <span>全网调研连接正常 · 最近更新 <time id="lastRefresh">刚刚</time></span>
+      <span>全网调研连接正常</span>
     </div>
 
     <section class="pixel-hero">
@@ -39,11 +39,6 @@
         <span>调研范围</span>
         <strong>境内 × 境外</strong>
         <span>多模型协同推理</span>
-      </div>
-      <div class="quick-stats">
-        <div class="stat"><b id="statSources">18</b><small>数据源</small></div>
-        <div class="stat"><b id="statFeeds">42</b><small>今日快讯</small></div>
-        <div class="stat"><b id="statAlerts">3</b><small>重点关注</small></div>
       </div>
     </section>
 
@@ -173,17 +168,13 @@
     <section class="pixel-section">
       <div class="pixel-section-head">
         <div><span class="kicker">AI WATCH</span><h2>AI 看盘</h2></div>
-        <div class="pill-group">
-          <span class="ai-pill">✦ A股 · 港股 · 美股</span>
-          <span class="meta-tag market-tag" id="marketFreshTag" title="推送前检查：大盘数据不是最新就不推">大盘数据 · 检查中</span>
-        </div>
+        <span class="ai-pill">✦ A股 · 港股 · 美股</span>
       </div>
       <article class="review-card" id="reviewCard">
         <div class="review-market">
           <div class="review-head">
             <span class="review-market-name">A 股</span>
             <span class="meta-tag" id="reviewBias">偏多</span>
-            <span class="review-date" id="reviewDate">复盘日 2026-08-28</span>
           </div>
           <p class="review-headline">放量普涨，<mark>算力硬件</mark>与<mark>存储芯片</mark>领涨主线，科创50 +3.77% 领跑，涨停 77 家，短线情绪偏暖，注意高位轮动。</p>
           <div class="review-strip">
@@ -205,7 +196,6 @@
           <div class="review-head">
             <span class="review-market-name">港股</span>
             <span class="meta-tag">偏多</span>
-            <span class="review-date">复盘日 2026-08-28</span>
           </div>
           <p class="review-headline">放量普涨，<mark>科技硬件</mark>与<mark>新能源车</mark>领涨主线，恒生科技 +2.41% 领跑，短线情绪偏暖，注意高位轮动。</p>
           <div class="review-strip">
@@ -226,7 +216,6 @@
           <div class="review-head">
             <span class="review-market-name">美股</span>
             <span class="meta-tag">偏多</span>
-            <span class="review-date">复盘日 2026-08-27</span>
           </div>
           <p class="review-headline">放量普涨，<mark>半导体</mark>与<mark>软件</mark>领涨主线，纳斯达克 +1.65% 领跑，短线情绪偏暖，注意高位轮动。</p>
           <div class="review-strip">
@@ -243,36 +232,9 @@
             <li><span class="point-no">06</span><span class="point-label">后市观点与策略</span><span>美股短线偏多但防高位波动；催化：英伟达财报超预期；关注美联储传声与财报季。</span></li>
           </ul>
         </div>
-        <div class="insight-foot">
-          <span>行情数据：东方财富接口 → 腾讯证券备用 → 内置快照兜底 · 推送前校验 A 股新鲜度，非最新自动拦截</span>
-        </div>
       </article>
     </section>
 
-    <section class="pixel-section sources-section">
-      <div class="pixel-section-head">
-        <div><span class="kicker">SOURCE STREAMS</span><h2>内容来源 <span class="source-count">18</span></h2></div>
-        <button class="pixel-text-btn" id="manageSources">管理</button>
-      </div>
-      <div class="source-list" id="sourceList"></div>
-      <button class="outline-btn" id="addSource">＋ 增加内容与栏目</button>
-    </section>
-
-    <section class="pixel-section delivery-section">
-      <div class="pixel-section-head">
-        <div><span class="kicker">WECHAT DELIVERY</span><h2>微信阅读</h2></div>
-        <span class="connected"><i></i> 已连接</span>
-      </div>
-      <div class="delivery-card">
-        <div class="push-icon">AI</div>
-        <div><b>简报订阅</b><small>推送至微信 · 每日两次 · 10 万字全量口径</small></div>
-        <button class="chevron" id="deliverySettings" aria-label="推送设置详情">›</button>
-      </div>
-      <div class="delivery-subs">
-        <div class="sub-item"><span class="sub-icon">◎</span><div><b>订阅者</b><small id="subCount">1 人已订阅</small></div></div>
-        <div class="sub-item"><span class="sub-icon">▣</span><div><b>推送统计</b><small>今日已推 2 次 · 单条上限 98,000 字符（会员 10 万字留 2,000 余量）</small></div></div>
-      </div>
-    </section>
 
     <footer>
       <strong>作者：章鱼 ai　　仅供参考，分析研究</strong>

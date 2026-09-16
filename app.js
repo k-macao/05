@@ -1,84 +1,17 @@
-const fallbackSources=['MKTNews 快讯','华尔街见闻 快讯','华尔街见闻最新','华尔街见闻 最热','财联社 电报','财联社 深度','财联社 热门','雪球 热门股票','格隆汇 事件','法布财经 快讯','法布财经 头条','金十数据','知乎热榜','抖音热搜','微博实时热搜','虎扑热搜','AI Hot','Google news 中文'];
-const stockWords=['股票','深度','热门','事件','热搜','热榜'];
 // github.io（GitHub Pages）是纯静态托管：POST /api/run 必然 405，
 // 定时/手动推送由 GitHub Actions 完成，按钮在此环境下改为跳转 Actions。
 const isGithubPages=location.hostname.endsWith('.github.io');
 const ACTIONS_URL='https://github.com/k-macao/05/actions/workflows/daily-push.yml';
-const list=document.querySelector('#sourceList');
 const toast=document.querySelector('#toast');
-const countEl=document.querySelector('.source-count');
 const runBtn=document.querySelector('#runBtn');
 const runState=runBtn.querySelector('.run-state');
 const refreshBtn=document.querySelector('#refreshBtn');
-const lastRefreshEl=document.querySelector('#lastRefresh');
-const statSourcesEl=document.querySelector('#statSources');
-const reviewDateEl=document.querySelector('#reviewDate');
 
-function getFallbackReviewDate(){
-  const now=new Date();
-  const utc=now.getTime()+(now.getTimezoneOffset()*60000);
-  const bj=new Date(utc+(3600000*8));
-  bj.setDate(bj.getDate()-2);
-  while(bj.getDay()===0||bj.getDay()===6){bj.setDate(bj.getDate()-1);}
-  const yyyy=bj.getFullYear(),mm=String(bj.getMonth()+1).padStart(2,'0'),dd=String(bj.getDate()).padStart(2,'0');
-  return `${yyyy}-${mm}-${dd}`;
+function showToast(text,ms=2600){
+  toast.textContent=text;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'),ms);
 }
-if(reviewDateEl){reviewDateEl.textContent='复盘日 '+getFallbackReviewDate();}
-
-function showToast(text,ms=2600){toast.textContent=text;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),ms)}
-
-function updateRefreshTime(){if(lastRefreshEl){const now=new Date();lastRefreshEl.textContent=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;}}
-
-function renderSources(sources){
-  if(!sources||!sources.length) return;
-  list.innerHTML='';
-  sources.forEach(name=>{
-    const el=document.createElement('div');
-    el.className='source-item';
-    const short=String(name).slice(0,2);
-    el.innerHTML=`<span class="source-icon">${short}</span><b>${name}</b>${stockWords.some(x=>String(name).includes(x))?'<span class="tag">股票主题</span>':''}`;
-    list.append(el);
-  });
-  if(countEl) countEl.textContent=sources.length;
-}
-
-// 优先从后端拉取来源列表，后端不可用时回退到内置来源，保证纯静态预览仍可运行。
-// 注意用相对路径：github.io 项目页部署在 /05/ 子路径下，绝对路径会打到错误的主机根。
-(async function loadSources(){
-  let sources=fallbackSources;
-  try{
-    const res=await fetch('api/sources');
-    if(res.ok){const data=await res.json();if(Array.isArray(data)&&data.length)sources=data;}
-  }catch(e){/* 后端未接入时忽略 */ }
-  renderSources(sources);
-  if(statSourcesEl) statSourcesEl.textContent=sources.length;
-})();
-
-// 大盘数据新鲜度：与推送闸门同一套检查（不是最新就不推），此处把结果展示出来。
-const marketFreshTag=document.querySelector('#marketFreshTag');
-async function loadMarketStatus(){
-  if(!marketFreshTag) return;
-  try{
-    const res=await fetch('api/market');
-    if(!res.ok) throw new Error(String(res.status));
-    const data=await res.json();
-    const f=data.freshness||{};
-    if(f.ok){
-      marketFreshTag.textContent=`大盘数据最新 · 复盘日 ${data.date||f.market_date||'--'}`;
-      marketFreshTag.classList.add('ok');
-    }else{
-      marketFreshTag.textContent='大盘数据非最新 · 推送已拦截';
-      marketFreshTag.classList.add('bad');
-    }
-    marketFreshTag.title=f.reason||marketFreshTag.title;
-    if(reviewDateEl&&data.date){reviewDateEl.textContent='复盘日 '+data.date;}
-  }catch(e){
-    marketFreshTag.textContent='大盘数据 · 状态未知';
-    marketFreshTag.classList.add('bad');
-    marketFreshTag.title='后端 /api/market 不可用（静态托管或服务未启动）';
-  }
-}
-loadMarketStatus();
 
 // 手动运行：调用后端 /api/run 完成聚合、AI 总结与 PushPlus 推送；github.io 静态托管下改为跳转 Actions 手动触发。
 runBtn.onclick=async()=>{
@@ -111,16 +44,18 @@ runBtn.onclick=async()=>{
     runState.textContent=originalState;
   }
 };
-document.querySelector('#addSource').onclick=()=>showToast('栏目接口已就绪 · 可添加 RSS / API 来源');
-document.querySelector('#manageSources').onclick=()=>showToast('进入来源管理');
-document.querySelector('#editSchedule').onclick=()=>showToast('可编辑每日 12:30 / 19:30 推送时间');document.querySelector('#expandBtn').onclick=()=>showToast('正在展开 AI 分析与延展');
-if(refreshBtn)refreshBtn.onclick=()=>{updateRefreshTime();showToast('数据已刷新');};
-const deliverySettingsBtn=document.querySelector('#deliverySettings');
-if(deliverySettingsBtn)deliverySettingsBtn.onclick=()=>showToast('打开 PushPlus 推送配置');
+
+document.querySelector('#editSchedule').onclick=()=>showToast('可编辑每日 12:30 / 19:30 推送时间');
+document.querySelector('#expandBtn').onclick=()=>showToast('正在展开 AI 分析与延展');
+if(refreshBtn)refreshBtn.onclick=()=>showToast('内容已刷新');
+
 // Schedule toggle persistence
-document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{const key='schedule_'+input.dataset.toggle;const saved=localStorage.getItem(key);if(saved!==null)input.checked=saved==='1';input.onchange=()=>{localStorage.setItem(key,input.checked?'1':'0');showToast(input.checked?'已开启推送':'已关闭推送');};});
-const countdownEl=document.querySelector('.countdown');
-if(countdownEl){
-  let seconds=3*3600+28*60+16;
-  setInterval(()=>{seconds=Math.max(0,seconds-1);const h=String(Math.floor(seconds/3600)).padStart(2,'0'),m=String(Math.floor(seconds%3600/60)).padStart(2,'0'),s=String(seconds%60).padStart(2,'0');countdownEl.textContent=`还有 ${h}:${m}:${s}`},1000);
-}
+document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
+  const key='schedule_'+input.dataset.toggle;
+  const saved=localStorage.getItem(key);
+  if(saved!==null)input.checked=saved==='1';
+  input.onchange=()=>{
+    localStorage.setItem(key,input.checked?'1':'0');
+    showToast(input.checked?'已开启推送':'已关闭推送');
+  };
+});
