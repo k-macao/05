@@ -50,7 +50,7 @@ PUSHPLUS_ERROR_HINTS = {
 
 
 def build_content(now, review=None):
-    """真实抓取 18 个数据源并渲染 HTML 简报（网络不可用时自动回退内置演示数据）。"""
+    """真实抓取五大板块全部数据源并渲染 HTML 简报（网络不可用时自动回退内置演示数据）。"""
     try:
         brief = sources.collect_all()
     except Exception:
@@ -80,6 +80,8 @@ def main():
     print(f"诊断：推送容量 {max_chars:,} 字符（{tier}上限，各留 2,000 安全余量）· "
           f"正文末尾快讯每源 {news_per_source} 条（不标注来源）· "
           f"每源抓取 {sources.default_fetch_limit()} 条", flush=True)
+    print("诊断：数据板块 " + "｜".join(f"{sec['label']} {sec['count']} 源" for sec in sources.section_catalog())
+          + f"（共 {len(sources.SOURCES)} 源，{sources.fetch_workers()} 线程并发抓取）", flush=True)
     if not sources._is_pushplus_member():
         print("诊断：检测到 PUSHPLUS_MEMBER=0，已按普通账号 2 万字精选口径生成；"
               "删除该变量即恢复 10 万字全量推送", flush=True)

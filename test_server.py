@@ -117,6 +117,30 @@ class ServerSmokeTest(unittest.TestCase):
         self.assertIsInstance(data, list)
         self.assertGreaterEqual(len(data), 1)
 
+    def test_sections_returns_catalog(self):
+        # 五大板块目录：key / label / sources，源清单合计等于 /api/sources。
+        status, raw = request(self.base, "GET", "/api/sections")
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        self.assertEqual([sec["key"] for sec in data], ["finance", "trending", "policy", "world", "civic"])
+        _status, raw_sources = request(self.base, "GET", "/api/sources")
+        all_sources = json.loads(raw_sources)
+        self.assertEqual([n for sec in data for n in sec["sources"]], all_sources)
+        for sec in data:
+            self.assertTrue(sec["label"])
+            self.assertEqual(sec["count"], len(sec["sources"]))
+
+    def test_brief_section_filter(self):
+        # ?section=civic 只返回该板块的源；未知板块 404 并列出可用板块。
+        status, raw = request(self.base, "GET", "/api/brief?section=civic")
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        self.assertEqual(list(data), ["g0v 立法院議案", "EquityStack 政策承诺", "EquityStack 法案追踪", "GovTrack 国会立法"])
+        self.assertTrue(all(len(items) >= 1 for items in data.values()))
+        status, raw = request(self.base, "GET", "/api/brief?section=nope")
+        self.assertEqual(status, 404)
+        self.assertIn("civic", json.loads(raw)["sections"])
+
     def test_run_without_token_is_503_not_405(self):
         status, raw = request(
             self.base, "POST", "/api/run", body={},
@@ -178,7 +202,7 @@ class MockedPushTest(unittest.TestCase):
                 # 一对多推送：载荷必须带群组编码 oai.1。
                 self.assertEqual(payload["topic"], "oai.1")
                 self.assertIn("章鱼", payload["title"])
-                # 推送内容为真实抓取的 18 个数据源 HTML 简报（网络不可用时回退演示数据）。
+                # 推送内容为真实抓取五大板块数据源的 HTML 简报（网络不可用时回退演示数据）。
                 self.assertIn("章鱼", payload["content"])
                 self.assertIn("数据源", payload["content"])
                 self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送

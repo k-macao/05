@@ -26,14 +26,28 @@ python3 -m http.server 8080
 - **开头「AI 看盘」板块**：按六维度内容策略用 AI 复盘最新的 **A 股、港股、美股** 行情。A 股——① 三大指数涨跌（上证/深成/创业板/科创50）② 两市成交额 ③ 涨跌家数与涨跌停 ④ 领涨 / 领跌板块 ⑤ 主力资金与北向资金 ⑥ 后市观点与策略。港股——恒生 / 恒生科技 / 国企指数、港股成交额、涨跌家数、领涨领跌、南向资金、后市观点。美股——道指 / 标普 / 纳指、美股成交额、涨跌家数、领涨领跌、资金与避险、后市观点。数据链路：东方财富公开行情接口（主源）优先抓取 → 腾讯证券行情接口（备用源）补位 → 内置真实快照兜底，无网络环境同样稳定出内容。详见 `docs/ashare_review.md`。
 - **开头新增「AI 板块机会」板块**：与「AI 每日总结」共用同一套多空信号统计。「机会方向」按 信号强度 × 跨源热度 排序列出净多头板块 Top 4，每个板块给出净多计数、命中源数 / 提及条数，以及最多 3 条支撑新闻证据（标注来源数据源、方向相符的证据优先）；「承压方向」单列净空头板块 Top 2（每个最多 2 条证据）作为资金回避方向。当日样本无净多头信号时诚实标注「暂无净多头信号占优的板块」，不编造结论。
 - **开头新增「AI 政策分析」板块**：与「AI 每日总结」「AI 板块机会」共用同一批真实抓取标题，但按「政策维度」归因——① 货币政策 · 美联储 ② 央行 · 流动性 ③ 汇率与外汇干预 ④ 财政 · 关税与债务 ⑤ 产业与科技政策 ⑥ 资本市场监管 ⑦ 地缘与贸易政策 ⑧ 地产与地方政策。每个维度统计跨源命中数 / 提及条数与「政策净多 / 净空」，并用鹰派·鸽派词库判定政策取向（偏鹰 = 收紧、偏鸽 = 宽松；否定表述自动反转，例如「不再那么鸽派」计为鹰派），最多 2 条支撑新闻按同方向优先展示。当日样本无政策信号时如实标注「暂无政策面信号可统计」，不编造结论。引擎入口 `sources.analyze_policy()`，板块文案口径见 `docs/ai_policy_section.md`。
-- **正文最后的「全网快讯」列表**：四个分析栏目之后、免责声明之前，把当日抓取到的原始快讯列出来——**每个数据源固定保留 3 条**（`sources.NEWS_ITEMS_PER_SOURCE`），按数据源顺序取每源前 3 条、跨源去重（同一条新闻被多源转载只列一次），**只显示标题、不标注来源（隐藏源头）**，也不带跳转链接，避免域名反向暴露来源。推送字符额度不够时自动收敛到每源 2 条 / 1 条，最后整段省略，分析栏目始终保留。
+- **正文最后的「全网快讯」列表**：四个分析栏目之后、免责声明之前，把当日抓取到的原始快讯列出来——**按五大板块分组、每个数据源固定保留 3 条**（`sources.NEWS_ITEMS_PER_SOURCE`），按「板块 → 数据源」顺序取每源前 3 条、跨源去重（同一条新闻被多源转载只列一次），每个板块一行小标题（财经快讯 / 热搜热点 / 政策发布 · 官方信息源 / 全球政经媒体 / 公民科技 · 政治透明度），编号全表连续，**只显示标题、不标注来源（隐藏源头）**，也不带跳转链接，避免域名反向暴露来源。推送字符额度不够时自动收敛到每源 2 条 / 1 条，最后整段省略，分析栏目始终保留。
 - 快讯列表之后只保留免责声明与作者署名：**作者：章鱼 ai　　仅供参考，分析研究**；原「调研方法」说明段（多模型协同推理与模型清单那段注解文字）已从推送正文和本地页面移除，`index.html` 只留一行署名。
 - `sources.py` 生成内联样式 HTML，可直接用于微信阅读和 PushPlus HTML 模板。
 - `index.html` 是提供计划和手动推送操作的本地管理页；监测来源清单、时间遥测与推送协议细节不在页面正文展示。
 
+## 数据板块与数据源
+
+脚本按 **五大板块并发抓取 48 个数据源**（零第三方依赖，仅标准库；网络不可用时逐源自动回退内置演示数据）。板块是抓取与呈现的分组口径：`sources.SECTIONS` 定义板块，`SOURCE_META` 里每个源带 `section` 归属，`collect_section("policy")` 可只抓某一板块，`GET /api/sections` 返回板块目录，`GET /api/brief?section=policy` 只返回该板块的抓取结果。
+
+| 板块 | 源数 | 内容 | 抓取方式 | 参考项目 |
+| --- | --- | --- | --- | --- |
+| 财经快讯 | 12 | MKTNews、华尔街见闻、财联社、雪球、格隆汇、法布财经、金十 | rebang.vip 聚合通道（服务端渲染，链接回指源站） | — |
+| 热搜热点 | 6 | 知乎、抖音、微博、虎扑、AI Hot、Google news 中文 | 直连 API / RSS | [ourongxing/newsnow](https://github.com/ourongxing/newsnow) |
+| 政策发布 · 官方信息源 | 14 | 国务院最新政策 / 政策解读 / 政务联播、发改委、财政部、商务部、证监会、香港特区政府新闻公报；美联储、欧洲央行、美国 SEC、美国联邦公报总统文件、英国财政部 GOV.UK、英国 FCA | 境内：政策发布列表页 + 链接正则（无 RSS）；境外：官方 RSS / Atom | [changwu/china-policy-sites](https://github.com/changwu/china-policy-sites) · [angelinajh/regtech-policy-tracker](https://github.com/angelinajh/regtech-policy-tracker) |
+| 全球政经媒体 | 12 | Reuters（经 Google News 检索）、Bloomberg 政治 / 经济、Financial Times、纽约时报国际、华盛顿邮报政治、POLITICO、Foreign Policy、The Diplomat、经济学人财经、日经亚洲、南华早报 | 官方 RSS | [edoardottt/news-list](https://github.com/edoardottt/news-list) |
+| 公民科技 · 政治透明度 | 4 | g0v 生态立法院議案（ly.govapi.tw）、EquityStack 政策承诺 / 法案追踪、GovTrack 国会重大立法动态 | 开放 JSON API / RSS | [g0v](https://github.com/g0v) · [keepittechie/equitystack](https://github.com/keepittechie/equitystack) |
+
+新增一个源只需在 `SOURCE_META` 加一行（`feed=` 订阅地址，或 `page=` 列表页 + `pattern=` 条目链接正则），再补一组 `_DEMO` 兜底标题即可；板块抓取的设计与各源链接特征见 `docs/policy_sections.md`。政策 / 媒体板块的英文标题同样进入「AI 每日总结 / 板块机会 / 政策分析」的统计：主题、多空与鹰鸽词库均含英文词（按单词边界匹配，`AI` 不会误命中 `SAID`）。
+
 ## 数据与推送
 
-脚本会抓取 18 个数据源，网络不可用时自动使用内置演示数据。**推送内容默认按 PushPlus 10 万字上限口径生成**（由 `sources.pushplus_quota()` 统一决定字符上限与每源条数，`build_html()` 自动遵守）。配置 `PUSHPLUS_TOKEN` 后，可通过 GitHub Actions 或本地服务执行推送：
+**推送内容默认按 PushPlus 10 万字上限口径生成**（由 `sources.pushplus_quota()` 统一决定字符上限与每源条数，`build_html()` 自动遵守）。配置 `PUSHPLUS_TOKEN` 后，可通过 GitHub Actions 或本地服务执行推送：
 
 ```bash
 PUSHPLUS_TOKEN=xxx python3 push_brief.py
@@ -47,6 +61,7 @@ PUSHPLUS_TOKEN=xxx python3 push_brief.py
 - `PUSHPLUS_MAX_CHARS=98000`：自定义单条推送字符上限（覆盖上面的会员/普通默认值；超上限时自动逐级收敛每源条数，保证发得出去）。
 - `PUSHPLUS_ITEMS_PER_SOURCE=20`：推送口径里每个数据源最多展示条数（`all` = 抓到的全部快讯）。注意：正文最后的「全网快讯」列表固定按 **每源 3 条** 输出（`sources.NEWS_ITEMS_PER_SOURCE`），该变量只能把条数往下压（如设 `1` 即每源 1 条），设成大于 3 不会让快讯列表变长——多抓的条数用于「AI 每日总结 / 板块机会 / 政策分析」的信号统计。
 - `BRIEF_FETCH_LIMIT=20`：自定义每个数据源的抓取条数（默认与展示口径一致，避免「额度放宽了但内容没变多」）。
+- `BRIEF_FETCH_WORKERS=8`：并发抓取线程数（48 个源互不依赖，默认 8 线程；设 `1` 退回串行）。
 - `SKIP_MARKET_CHECK=1`：跳过新鲜度检查，直接推送。
 - `MARKET_FRESHNESS_FORCE=fresh|stale`：强制检查结果，用于联调测试。
 

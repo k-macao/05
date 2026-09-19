@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""章鱼 AI·全景分析 —— 18 个数据源抓取采集器（零第三方依赖，仅标准库）。
+"""章鱼 AI·全景分析 —— 五大板块 48 个数据源抓取采集器（零第三方依赖，仅标准库）。
 
 为什么这么设计
 ------------
@@ -7,16 +7,24 @@
   直接 GET 只能拿到空壳，无法解析出条目。
 - 因此每个源同时记录“源头站”(origin) 与一个公开的**热榜聚合通道** rebang.vip
   （该聚合页为服务端渲染，标题与链接均回指源头站原文，是稳定的抓取通道）。
-- 新增 6 个热搜/热点源（知乎、抖音、微博、虎扑、AI Hot、Google news 中文）来自
+- 6 个热搜/热点源（知乎、抖音、微博、虎扑、AI Hot、Google news 中文）来自
   ourongxing/newsnow 项目，使用直接 API / HTML 抓取。
-- 抓取顺序：自定义收集器 / 聚合通道 → 内置演示数据兜底，
-  保证任何环境（本地 / GitHub Pages / GitHub Actions）都能稳定出结果。
+- 「政策发布 · 官方信息源」板块：国务院 / 部委政策发布列表页（changwu/china-policy-sites 清单，
+  服务端渲染、无 RSS，按链接正则抓）+ 境外央行 / 监管机构官方 RSS·Atom
+  （angelinajh/regtech-policy-tracker 的做法）。
+- 「全球政经媒体」板块：edoardottt/news-list 清单里的政治 / 地缘 / 经济头部媒体官方 RSS。
+- 「公民科技 · 政治透明度」板块：g0v 生态立法院开放 API、keepittechie/equitystack 公开接口、GovTrack RSS。
+- 抓取顺序：自定义收集器 / RSS·Atom / 列表页 / 聚合通道 → 内置演示数据兜底，
+  保证任何环境（本地 / GitHub Pages / GitHub Actions）都能稳定出结果；各源并发抓取。
 
 对外接口
 --------
-    SOURCES            : 18 个源的名称列表（与前端 /api/sources、推送保持一致）
-    SOURCE_META        : 每个源的元信息（name / origin / channel / collector）
-    collect_all()      : 依次抓取全部 18 个源，返回 {name: [item, ...]}
+    SECTIONS           : 五大板块目录（key / label / note），每个源的 section 归属其一
+    SOURCES            : 全部源的名称列表（与前端 /api/sources、推送保持一致）
+    SOURCE_META        : 每个源的元信息（name / section / origin / channel / collector / feed / page）
+    section_catalog()  : 板块 → 源清单（供 /api/sections）
+    collect_all()      : 并发抓取全部源，返回 {name: [item, ...]}
+    collect_section(k) : 只抓某个板块（policy / world / civic / finance / trending）
     collect_one(name)  : 抓取单个源，返回 [item, ...]
     analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
     analyze_policy()   : 「AI 政策分析」引擎（政策维度热度 + 多空方向 + 鹰鸽取向）
@@ -41,9 +49,12 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 from html.parser import HTMLParser
+from http.client import HTTPException
 from http.cookiejar import CookieJar
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor
@@ -54,31 +65,126 @@ LIMIT_MEMBER = 20     # 10 万字口径下每源抓 20 条：把放宽的字符�
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
+# ---------------------------------------------------------------- 板块定义
+# 每个数据源归属一个「板块」(section)。板块是抓取与呈现的分组口径：
+#   collect_section() 按板块抓取、/api/sections 按板块列源、简报末尾「全网快讯」按板块分组。
+SECTIONS = [
+    {"key": "finance",  "label": "财经快讯",
+     "note": "境内外财经资讯与 7×24 快讯（rebang.vip 聚合通道，标题与链接回指源头站）"},
+    {"key": "trending", "label": "热搜热点",
+     "note": "社交平台热榜与 AI 热点（ourongxing/newsnow 同款直连抓取）"},
+    {"key": "policy",   "label": "政策发布 · 官方信息源",
+     "note": "国务院与部委政策原文、境外央行与监管机构官方发布"
+             "（changwu/china-policy-sites 站点清单 · angelinajh/regtech-policy-tracker 式官方 RSS）"},
+    {"key": "world",    "label": "全球政经媒体",
+     "note": "国际政治 / 地缘 / 经济头部媒体 RSS（edoardottt/news-list 清单）"},
+    {"key": "civic",    "label": "公民科技 · 政治透明度",
+     "note": "立法追踪、政策承诺核实等公民科技项目开放数据（g0v 生态 · keepittechie/equitystack · GovTrack）"},
+]
+SECTION_KEYS = [s["key"] for s in SECTIONS]
+SECTION_LABELS = {s["key"]: s["label"] for s in SECTIONS}
+
+# 政府网站列表页的条目链接特征（用 page 抓取器时按正则筛选 <a href>，排除导航 / 栏目链接）。
+_GOVCN_PATTERN = r"gov\.cn/(?:zhengce|lianbo|yaowen|zhuanti)/.*content_\d+\.htm"
+
 # ---------------------------------------------------------------- 源定义
-# channel 为 rebang.vip 聚合页路径；origin 为源头站域名（用于解析链接过滤/直连）。
+# 抓取方式四选一（collect_one 依次判定）：
+#   collector : 自定义收集器（_COLLECTORS 注册表里的函数名）
+#   feed      : RSS 2.0 / Atom 订阅地址（可选 headers / strip_suffix）
+#   page      : 服务端渲染的列表页 + pattern（条目链接正则），相对链接自动补全
+#   channel   : rebang.vip 聚合页路径 + origin 源头站域名（用于链接过滤）
+# 任何方式失败都回退到 _DEMO 演示数据，保证离线也能出简报。
 SOURCE_META = [
-    {"name": "MKTNews 快讯",    "origin": "mktnews.net",            "channel": "https://www.rebang.vip/mktnews/hot-list"},
-    {"name": "华尔街见闻 快讯",  "origin": "wallstreetcn.com",        "channel": "https://www.rebang.vip/wallstreetcn/quick"},
-    {"name": "华尔街见闻最新",   "origin": "wallstreetcn.com",        "channel": "https://www.rebang.vip/wallstreetcn/hot-news"},
-    {"name": "华尔街见闻 最热",  "origin": "wallstreetcn.com",        "channel": "https://www.rebang.vip/wallstreetcn/hot-list"},
-    {"name": "财联社 电报",      "origin": "cls.cn",                 "channel": "https://www.rebang.vip/cailianshe/telegram"},
-    {"name": "财联社 深度",      "origin": "cls.cn",                 "channel": "https://www.rebang.vip/cailianshe/depth"},
-    {"name": "财联社 热门",      "origin": "cls.cn",                 "channel": "https://www.rebang.vip/cailianshe/hot-list"},
-    {"name": "雪球 热门股票",    "origin": "xueqiu.com",             "channel": "https://www.rebang.vip/xueqiu/7-24-hot"},
-    {"name": "格隆汇 事件",      "origin": "gelonghui.com",          "channel": "https://www.rebang.vip/gelonghui/hot-list"},
-    {"name": "法布财经 快讯",    "origin": "fastbull.com",           "channel": "https://www.rebang.vip/fabubaijiance/hot-express"},
-    {"name": "法布财经 头条",    "origin": "fastbull.com",           "channel": "https://www.rebang.vip/fabubaijiance/hot-news"},
-    {"name": "金十数据",        "origin": "jin10.com",              "channel": "https://www.rebang.vip/jinshishuju/hot-list"},
-    # --- 新增 6 个热搜/热点源（来自 ourongxing/newsnow 项目）---
-    {"name": "知乎热榜",        "collector": "zhihu"},
-    {"name": "抖音热搜",        "collector": "douyin"},
-    {"name": "微博实时热搜",    "collector": "weibo"},
-    {"name": "虎扑热搜",        "collector": "hupu"},
-    {"name": "AI Hot",          "collector": "aihot"},
-    {"name": "Google news 中文", "collector": "google_news"},
+    # --- 财经快讯（rebang.vip 聚合通道）---
+    {"name": "MKTNews 快讯",    "section": "finance", "origin": "mktnews.net",      "channel": "https://www.rebang.vip/mktnews/hot-list"},
+    {"name": "华尔街见闻 快讯",  "section": "finance", "origin": "wallstreetcn.com", "channel": "https://www.rebang.vip/wallstreetcn/quick"},
+    {"name": "华尔街见闻最新",   "section": "finance", "origin": "wallstreetcn.com", "channel": "https://www.rebang.vip/wallstreetcn/hot-news"},
+    {"name": "华尔街见闻 最热",  "section": "finance", "origin": "wallstreetcn.com", "channel": "https://www.rebang.vip/wallstreetcn/hot-list"},
+    {"name": "财联社 电报",      "section": "finance", "origin": "cls.cn",           "channel": "https://www.rebang.vip/cailianshe/telegram"},
+    {"name": "财联社 深度",      "section": "finance", "origin": "cls.cn",           "channel": "https://www.rebang.vip/cailianshe/depth"},
+    {"name": "财联社 热门",      "section": "finance", "origin": "cls.cn",           "channel": "https://www.rebang.vip/cailianshe/hot-list"},
+    {"name": "雪球 热门股票",    "section": "finance", "origin": "xueqiu.com",       "channel": "https://www.rebang.vip/xueqiu/7-24-hot"},
+    {"name": "格隆汇 事件",      "section": "finance", "origin": "gelonghui.com",    "channel": "https://www.rebang.vip/gelonghui/hot-list"},
+    {"name": "法布财经 快讯",    "section": "finance", "origin": "fastbull.com",     "channel": "https://www.rebang.vip/fabubaijiance/hot-express"},
+    {"name": "法布财经 头条",    "section": "finance", "origin": "fastbull.com",     "channel": "https://www.rebang.vip/fabubaijiance/hot-news"},
+    {"name": "金十数据",        "section": "finance", "origin": "jin10.com",        "channel": "https://www.rebang.vip/jinshishuju/hot-list"},
+    # --- 热搜热点（来自 ourongxing/newsnow 项目的 6 个直连源）---
+    {"name": "知乎热榜",        "section": "trending", "collector": "zhihu"},
+    {"name": "抖音热搜",        "section": "trending", "collector": "douyin"},
+    {"name": "微博实时热搜",    "section": "trending", "collector": "weibo"},
+    {"name": "虎扑热搜",        "section": "trending", "collector": "hupu"},
+    {"name": "AI Hot",          "section": "trending", "collector": "aihot"},
+    {"name": "Google news 中文", "section": "trending", "collector": "google_news"},
+    # --- 政策发布 · 官方信息源 ---
+    # 境内：changwu/china-policy-sites 清单中的国务院 / 部委「政策发布」列表页（服务端渲染，无 RSS，按链接正则抓）。
+    {"name": "国务院 最新政策",   "section": "policy", "page": "https://www.gov.cn/zhengce/zuixin/", "pattern": _GOVCN_PATTERN},
+    {"name": "国务院 政策解读",   "section": "policy", "page": "https://www.gov.cn/zhengce/jiedu/",  "pattern": _GOVCN_PATTERN},
+    {"name": "国务院 政务联播",   "section": "policy", "page": "https://www.gov.cn/lianbo/",         "pattern": _GOVCN_PATTERN},
+    {"name": "发改委 政策发布",   "section": "policy", "page": "https://www.ndrc.gov.cn/xxgk/zcfb/tz/",
+     "pattern": r"ndrc\.gov\.cn/xxgk/zcfb/.+/t\d{8}_\d+\.html"},
+    {"name": "财政部 政策发布",   "section": "policy", "page": "https://www.mof.gov.cn/zhengwuxinxi/zhengcefabu/",
+     "pattern": r"mof\.gov\.cn/.+/t\d{8}_\d+\.htm"},
+    {"name": "商务部 政策发布",   "section": "policy", "page": "https://www.mofcom.gov.cn/zwgk/zcfb/index.html",
+     "pattern": r"mofcom\.gov\.cn/zwgk/zcfb/art/\d{4}/art_\w+\.html"},
+    {"name": "证监会 新闻发布",   "section": "policy", "page": "https://www.csrc.gov.cn/csrc/xwfb/index.shtml",
+     "pattern": r"csrc\.gov\.cn/csrc/c(?:100028|106311|100039)/c\w+/content\.shtml"},
+    {"name": "香港特区政府 新闻公报", "section": "policy", "feed": "https://www.info.gov.hk/gia/rss/general_zh.xml"},
+    # 境外：angelinajh/regtech-policy-tracker 的做法 —— 直接订阅央行 / 监管机构官方 RSS（Atom 亦可）。
+    {"name": "美联储 新闻稿",     "section": "policy", "feed": "https://www.federalreserve.gov/feeds/press_all.xml"},
+    {"name": "欧洲央行 新闻稿",   "section": "policy", "feed": "https://www.ecb.europa.eu/rss/press.html"},
+    {"name": "美国 SEC 新闻稿",   "section": "policy", "feed": "https://www.sec.gov/news/pressreleases.rss",
+     # SEC 要求自动化访问声明身份（否则 403），见 https://www.sec.gov/os/accessing-edgar-data
+     "headers": {"User-Agent": "zhangyu-ai-brief/1.0 (github.com/k-macao/05)"}},
+    {"name": "美国联邦公报 总统文件", "section": "policy",
+     "feed": "https://www.federalregister.gov/api/v1/documents.rss?conditions%5Btype%5D%5B%5D=PRESDOCU&order=newest"},
+    {"name": "英国财政部 GOV.UK", "section": "policy", "feed": "https://www.gov.uk/government/organisations/hm-treasury.atom"},
+    {"name": "英国 FCA 新闻",     "section": "policy", "feed": "https://www.fca.org.uk/news/rss.xml"},
+    # --- 全球政经媒体（edoardottt/news-list 清单里的政治 / 地缘 / 经济头部媒体，走官方 RSS）---
+    # 路透官方 RSS 已停止，改经 Google News RSS 检索 reuters.com 近 24 小时报道（标题去掉「 - Reuters」后缀）。
+    {"name": "Reuters 路透",      "section": "world", "strip_suffix": " - Reuters",
+     "feed": "https://news.google.com/rss/search?q=site:reuters.com+when:1d&hl=en-US&gl=US&ceid=US:en"},
+    {"name": "Bloomberg 政治",    "section": "world", "feed": "https://feeds.bloomberg.com/politics/news.rss"},
+    {"name": "Bloomberg 经济",    "section": "world", "feed": "https://feeds.bloomberg.com/economics/news.rss"},
+    {"name": "Financial Times",  "section": "world", "feed": "https://www.ft.com/rss/home"},
+    {"name": "纽约时报 国际",      "section": "world", "feed": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"},
+    {"name": "华盛顿邮报 政治",    "section": "world", "feed": "https://feeds.washingtonpost.com/rss/politics"},
+    {"name": "POLITICO",         "section": "world", "feed": "https://rss.politico.com/politics-news.xml"},
+    {"name": "Foreign Policy",   "section": "world", "feed": "https://foreignpolicy.com/feed/"},
+    {"name": "The Diplomat",     "section": "world", "feed": "https://thediplomat.com/feed/"},
+    {"name": "经济学人 财经",      "section": "world", "feed": "https://www.economist.com/finance-and-economics/rss.xml"},
+    {"name": "日经亚洲",          "section": "world", "feed": "https://asia.nikkei.com/rss/feed/nar"},
+    {"name": "南华早报",          "section": "world", "feed": "https://www.scmp.com/rss/91/feed"},
+    # --- 公民科技 · 政治透明度（开放 API / RSS，只取公开条目）---
+    {"name": "g0v 立法院議案",      "section": "civic", "collector": "ly_bills"},
+    {"name": "EquityStack 政策承诺", "section": "civic", "collector": "equitystack_promises"},
+    {"name": "EquityStack 法案追踪", "section": "civic", "collector": "equitystack_bills"},
+    {"name": "GovTrack 国会立法",    "section": "civic",
+     "feed": "https://www.govtrack.us/events/events.rss?feeds=misc:activebills2"},
 ]
 
 SOURCES = [m["name"] for m in SOURCE_META]
+
+
+def source_meta(name: str) -> dict | None:
+    """按名称取数据源元信息（找不到返回 None）。"""
+    return next((m for m in SOURCE_META if m["name"] == name), None)
+
+
+def section_of(name: str) -> str:
+    """数据源所属板块 key；未知源归入 ``finance``（保持旧调用方行为）。"""
+    meta = source_meta(name)
+    return (meta or {}).get("section") or "finance"
+
+
+def sources_in_section(key: str) -> list:
+    """某板块下的数据源名称列表（保持 SOURCE_META 顺序）。"""
+    return [m["name"] for m in SOURCE_META if m.get("section") == key]
+
+
+def section_catalog() -> list:
+    """板块目录：[{key, label, note, sources: [name, ...], count}]，供 /api/sections 与文档使用。"""
+    return [dict(section, sources=sources_in_section(section["key"]),
+                 count=len(sources_in_section(section["key"]))) for section in SECTIONS]
 
 # 兜底演示数据：网络不可用时返回，保证任何环境都能出简报。
 _DEMO = {
@@ -218,6 +324,197 @@ _DEMO = {
         "新能源汽车全球销量创历史新高",
         "全球气候峰会达成初步减排协议",
     ],
+    # --- 政策发布 · 官方信息源 ---
+    "国务院 最新政策": [
+        "国务院办公厅转发文化和旅游部等部门《关于促进房车消费的若干措施》的通知",
+        "国务院办公厅关于进一步加强烟花爆竹全链条安全监管的意见",
+        "国务院办公厅关于加强中小企业回款难问题治理有关工作的通知",
+        "电力安全事故应急处置和调查处理条例",
+    ],
+    "国务院 政策解读": [
+        "解读：国务院常务会议部署实施医疗康复护理扩容提升工程",
+        "解读：打通堵点释放潜力 十部门推出促进房车消费若干措施",
+        "商务部有关负责人解读《促进智能家居消费行动方案》",
+        "总体平稳 向新向优：7组数字看8月份中国经济",
+    ],
+    "国务院 政务联播": [
+        "商务部新闻发言人就中美经贸磋商有关问题答记者问",
+        "农业农村部 工业和信息化部关于印发《全国农业机械化发展“十五五”规划》的通知",
+        "前8个月全国一般公共预算收入同比增长5.7%",
+        "工业和信息化部等十部门关于印发《医药工业发展“十五五”规划》的通知",
+        "国家发展改革委：安排3000万元支持海南暴雨洪涝灾害灾后应急恢复",
+    ],
+    "发改委 政策发布": [
+        "国家发展改革委关于印发《全国重点电力用户清单管理办法》的通知",
+        "国家发展改革委 国家能源局关于加快推进新型储能规模化应用的指导意见",
+        "关于组织开展 2026 年度国家级新型工业化产业示范基地申报工作的通知",
+        "国家发展改革委关于完善价格治理机制促进民营经济发展的若干措施",
+    ],
+    "财政部 政策发布": [
+        "《紧急采购管理暂行办法》印发",
+        "《关于加快农业保险高质量发展的实施方案》印发",
+        "财政部等三部门联合发文部署进一步做好财政金融协同促内需政策有关工作",
+        "财政部 税务总局关于调整部分能源资源行业企业城镇土地使用税政策的公告",
+        "关于扩大地方政府专项债券项目“自审自发”试点范围的通知",
+    ],
+    "商务部 政策发布": [
+        "商务部等8部门关于印发《促进智能家居消费行动方案》的通知",
+        "商务部公告2026年第38号 公布延长对原产于墨西哥和美国的进口碧根果反倾销调查期限决定",
+        "商务部 工业和信息化部 市场监管总局关于印发《汽车行业境外竞争行为与合规建设指引》的通知",
+        "商务部公告2026年第34号 公布加强无人机相关两用物项对美国出口管制",
+        "中华人民共和国商务部令二〇二六年第3号 关于对美国合规性测试公司采取反制措施的决定",
+    ],
+    "证监会 新闻发布": [
+        "中国证监会拟对17起案件线索的“吹哨人”给予奖励",
+        "中国证监会发布《期货公司监督管理办法》及配套实施公告",
+        "中国证监会严肃查处*ST卓然严重财务造假案件",
+        "国新办举行“开局起步‘十五五’”系列主题新闻发布会 介绍金融领域贯彻落实“十五五”规划、推动金融强国建设有关情况",
+        "中国证监会发布《衍生品交易监督管理办法（试行）》",
+    ],
+    "香港特区政府 新闻公报": [
+        "第六屆粵港澳大灣區律師執業考試順利舉行",
+        "香港特別行政區政府公布《香港特別行政區經濟和社會發展第一個五年規劃（2026—2030年）》",
+        "立法會研究「生態＋旅遊」事宜小組委員會考察香港聯合國教科文組織世界地質公園",
+        "衞生防護中心調查一宗猴痘確診個案",
+    ],
+    "美联储 新闻稿": [
+        "Federal Reserve issues FOMC statement",
+        "Federal Reserve Board announces approval of application by a bank holding company",
+        "Minutes of the Federal Open Market Committee, July 28-29, 2026",
+        "Federal Reserve Board releases results of annual bank stress test",
+    ],
+    "欧洲央行 新闻稿": [
+        "Monetary policy decisions",
+        "ECB Consumer Expectations Survey results – August 2026",
+        "ECB wage tracker at 2.7% in H1 2027, pointing to a modest uptick in negotiated wage growth",
+        "Christine Lagarde: A new age of capital: growth, sovereignty and AI",
+    ],
+    "美国 SEC 新闻稿": [
+        "SEC Issues “Innovation Exemption” to Facilitate the Trading of Tokenized NMS Stock and Request for Comment",
+        "SEC Proposes Rescission of Shareholder Proposal Rule and Reforms to Proxy Solicitation Process",
+        "SEC Charges Founder and His Two New Jersey-Based Companies in Alleged $16 Million Ponzi Scheme",
+        "SEC Proposes New Regulation Crypto Assets",
+    ],
+    "美国联邦公报 总统文件": [
+        "Presidential Determination on Major Drug Transit or Major Illicit Drug Producing Countries for Fiscal Year 2027",
+        "Modifying the Scope of Products of Canada Subject to the Additional Duties Imposed To Offset Canadian Discrimination Against the Commerce of the United States With Respect to Motor Vehicles",
+        "Adjusting Certain Delegations Under the Defense Production Act",
+        "Continuation of the National Emergency With Respect to Foreign Interference in or Undermining Public Confidence in United States Elections",
+    ],
+    "英国财政部 GOV.UK": [
+        "Chancellor sets date for Autumn Budget 2026",
+        "UK and US agree next steps on digital services taxation",
+        "Government publishes response to consultation on pensions investment reform",
+        "HM Treasury: Financial Services Growth and Competitiveness Strategy progress update",
+    ],
+    "英国 FCA 新闻": [
+        "FCA sets out next steps on motor finance redress scheme",
+        "FCA fines firm for failures in anti-money laundering controls",
+        "FCA consults on simplifying the retail conduct rulebook",
+        "FCA warns consumers about unauthorised crypto promotions",
+    ],
+    # --- 全球政经媒体 ---
+    "Reuters 路透": [
+        "German general Breuer elected to head top NATO military body",
+        "Greenland, Denmark say Trump deal won't compromise sovereignty",
+        "IMF tells EU ministers AI could boost growth but increase economic strains",
+        "Russia reports online attacks on electoral system on second day of parliamentary vote",
+        "UN peacekeeping chief in Lebanon says smooth transition is critical before pull-out",
+    ],
+    "Bloomberg 政治": [
+        "US Reaches Greenland Deal to End Row That Threatened NATO",
+        "China Slams US Law Tightening Sanctions on Russia and Iran",
+        "US, China Trade Teams Set to Huddle in New York on AI, Iran",
+        "US Tariffs Threaten Great Lakes Shipping Tied to Canada Trade",
+        "Midterm Voting Starts in Key States With Election 45 Days Out",
+    ],
+    "Bloomberg 经济": [
+        "BOJ Hikes Rates to 1.25% as Ueda Signals Shift in Policy Phase",
+        "Germany Agrees on €2.5 Billion Fuel Relief, Price Cap Plan",
+        "UK Mansion Tax May Expand to Homes Worth Over £1.5 Million",
+        "Fed Officials Split on Pace of Cuts as Inflation Stays Sticky",
+    ],
+    "Financial Times": [
+        "Investors warn Anthropic could struggle to sustain revenues post-IPO",
+        "OpenAI expects to burn $280bn by 2030",
+        "Nobel economists throw support behind California billionaire tax",
+        "Trump says US has deal with Denmark for ‘control’ of Greenland’s security",
+        "Unpacking the real fiscal costs of immigration",
+    ],
+    "纽约时报 国际": [
+        "Trump Announces Greenland Security Deal With Denmark",
+        "Russia Holds Parliamentary Vote Amid Reports of Cyberattacks",
+        "Saudi Arabia Issues Rare Air-Raid Alerts for Riyadh",
+        "E.U. Presses Partners to Deliver Ukraine Funding Ahead of U.N. Week",
+    ],
+    "华盛顿邮报 政治": [
+        "White House bars CNN and MS NOW from grounds after Trump order",
+        "Early voting begins in key states with midterms 45 days away",
+        "Senate advances bill tightening sanctions on Russia and Iran",
+        "Supreme Court to weigh limits on presidential tariff powers",
+    ],
+    "POLITICO": [
+        "Congress races to avert shutdown as spending talks stall",
+        "Trump signs Russia sanctions bill that opens China, India to tariffs",
+        "Democrats sharpen midterm message on tariffs and prices",
+        "Fed independence fight heads to Capitol Hill",
+    ],
+    "Foreign Policy": [
+        "What the Greenland Deal Means for NATO",
+        "Why China Is Rebuffing Calls for an AI Slowdown",
+        "The Iran War Is Reshaping Gulf Security",
+        "Europe’s Defense Spending Surge Faces a Reality Check",
+    ],
+    "The Diplomat": [
+        "Takaichi Seeks Trump Meeting Ahead of US-China Summit",
+        "Taiwan’s Legislature Debates Defense Special Budget",
+        "South Korea’s Lee Rules Out Combat Deployment to the Middle East",
+        "India’s Chip Ambitions Draw Japanese Suppliers",
+    ],
+    "经济学人 财经": [
+        "Central banks are moving in historic alignment on rate rises",
+        "What a stronger yen means for global markets",
+        "The billionaire tax debate reaches California",
+        "How tariffs are reshaping North American supply chains",
+    ],
+    "日经亚洲": [
+        "BOJ hikes rates to 1.25% as chief Ueda cites shift in policy phase",
+        "Trump signs Russia sanctions bill that opens China, India to tariffs",
+        "China rebuffs AI slowdown calls ahead of Trump-Xi summit: 5 things to know",
+        "Japan PM urges new cabinet to focus on markets, Mideast response",
+        "Inflation draws BOJ, Fed, ECB into historic alignment on rate hikes",
+    ],
+    "南华早报": [
+        "Hong Kong’s political, business elite pay final respects to Tung Chee-hwa",
+        "Denmark cautiously optimistic over Trump’s Greenland deal",
+        "Somali piracy rise tests China’s long-running Gulf of Aden mission",
+        "US space weapons move has ‘broken taboo’, could spark new arms race, Beijing forum told",
+    ],
+    # --- 公民科技 · 政治透明度 ---
+    "g0v 立法院議案": [
+        "〔排入院會〕「食品安全衛生管理法部分條文修正草案」，請審議案。（本院委員陳菁徽等17人）",
+        "〔排入院會〕「災害防救法第二十三條條文修正草案」，請審議案。（本院委員葉元之等19人）",
+        "〔排入院會〕「遺產及贈與稅法第十五條、第十七條之一及第二十九條條文修正草案」，請審議案。（本院委員葉元之等19人）",
+        "〔交付協商〕報告併案審查委員林月琴等16人擬具「教保服務人員條例第三十三條條文修正草案」等案。（教育及文化委員會）",
+    ],
+    "EquityStack 政策承诺": [
+        "[Failed] Supreme Court narrows Section 2 redistricting protections in Louisiana v. Callais（Courts / Voting Rights / Civil Rights · Donald J. Trump）",
+        "[In Progress] Prepare Americans for high-paying skilled trade jobs（Economy · Donald J. Trump）",
+        "[Partial] Promote excellence and innovation at HBCUs（Education · Donald J. Trump）",
+        "[Partial] End federal DEI and equity-based government programs（Economy · Donald J. Trump）",
+    ],
+    "EquityStack 法案追踪": [
+        "H.R. 40｜Commission to Study and Develop Reparation Proposals for African Americans Act（In Committee · Referred to the House Committee on the Judiciary.）",
+        "H.R. 14｜John R. Lewis Voting Rights Advancement Act（In Committee）",
+        "S. 1｜Freedom to Vote Act（Introduced）",
+    ],
+    "GovTrack 国会立法": [
+        "S. 5441: An original bill to improve services provided to taxpayers by the Internal Revenue Service.",
+        "S. 4395: Terrorism Risk Insurance Program Reauthorization Act of 2026",
+        "H.R. 5345: Improving Social Security’s Service to Victims of Identity Theft Act",
+        "H.R. 9497: Water Resources Development Act of 2026",
+        "H.R. 9576: National Fraud Enforcement Division Act of 2026",
+    ],
 }
 
 
@@ -261,10 +558,45 @@ def _clean_title(text: str) -> str:
     return m.group(2) if m else t
 
 
-def _fetch(url: str) -> str:
-    req = Request(url, headers={"User-Agent": UA}, method="GET")
+def _fetch_bytes(url: str, headers: dict | None = None) -> tuple:
+    """GET 原始字节，返回 (body, 响应头声明的 charset 或 "")。"""
+    req_headers = {"User-Agent": UA, "Accept": "*/*"}
+    req_headers.update(headers or {})
+    req = Request(url, headers=req_headers, method="GET")
     with urlopen(req, timeout=TIMEOUT) as resp:
-        return resp.read().decode("utf-8", "replace")
+        return resp.read(), (resp.headers.get_content_charset() or "")
+
+
+def _decode(raw: bytes, charset: str = "") -> str:
+    """按「响应头 charset → 页面 <meta charset> / XML encoding 声明 → UTF-8」顺序解码。
+
+    部委站点仍有 GB2312/GBK 页面，统一用 gb18030 超集解码；未知编码名回退 UTF-8。
+    """
+    enc = (charset or "").strip().lower()
+    if not enc:
+        head = raw[:4096].decode("ascii", "ignore").lower()
+        m = (re.search(r"""charset\s*=\s*["']?\s*([a-z0-9_-]+)""", head)
+             or re.search(r"""<\?xml[^>]*encoding\s*=\s*["']([a-z0-9_-]+)""", head))
+        enc = m.group(1) if m else "utf-8"
+    if enc in ("gb2312", "gbk", "gb_2312", "gb_2312-80"):
+        enc = "gb18030"
+    try:
+        return raw.decode(enc, "replace")
+    except LookupError:
+        return raw.decode("utf-8", "replace")
+
+
+def _fetch(url: str, headers: dict | None = None) -> str:
+    raw, charset = _fetch_bytes(url, headers)
+    return _decode(raw, charset)
+
+
+def _get_json(url: str, headers: dict | None = None):
+    """GET 并解析 JSON（开放 API 用）。"""
+    req_headers = {"Accept": "application/json"}
+    req_headers.update(headers or {})
+    raw, charset = _fetch_bytes(url, req_headers)
+    return json.loads(_decode(raw, charset or "utf-8"))
 
 
 def _filter_items(links, origin: str, limit: int):
@@ -472,6 +804,172 @@ def _collect_google_news(limit: int) -> list:
         return []
 
 
+# ---------------------------------------------------------------- 通用抓取器：RSS / Atom 订阅 与 政府列表页
+# 「政策发布 · 官方信息源」「全球政经媒体」两个板块的源都走这两个通用抓取器，
+# 新增一个源只需在 SOURCE_META 里加一行 feed= 或 page= + pattern=，无需再写函数。
+
+def _local_tag(node) -> str:
+    """去掉命名空间的标签名（Atom 带 {http://www.w3.org/2005/Atom} 前缀）。"""
+    return node.tag.rsplit("}", 1)[-1] if isinstance(node.tag, str) else ""
+
+
+def _parse_feed(raw, limit: int, strip_suffix: str = "") -> list:
+    """解析 RSS 2.0 / RSS 1.0 / Atom 文本（str 或 bytes），返回 [{title, url}]。纯函数，便于测试。
+
+    - RSS：<item><title>…</title><link>…</link></item>
+    - Atom：<entry><title>…</title><link href="…" rel="alternate"/></entry>
+    - ``strip_suffix``：去掉标题固定后缀（如 Google News 检索结果的「 - Reuters」）。
+    """
+    root = ET.fromstring(raw)
+    items, seen = [], set()
+    for node in root.iter():
+        if _local_tag(node) not in ("item", "entry"):
+            continue
+        title, link = "", ""
+        for child in node:
+            tag = _local_tag(child)
+            if tag == "title":
+                title = _collapse(html.unescape("".join(child.itertext())))
+            elif tag == "link":
+                href = (child.text or "").strip() or (child.get("href") or "").strip()
+                rel = (child.get("rel") or "alternate").lower()
+                if href and (not link or rel == "alternate"):
+                    link = href
+        if strip_suffix and title.endswith(strip_suffix):
+            title = title[: -len(strip_suffix)].rstrip()
+        if not title or title in seen:
+            continue
+        seen.add(title)
+        items.append({"title": title, "url": link})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _collect_feed(url: str, limit: int, headers: dict | None = None, strip_suffix: str = "") -> list:
+    """抓取 RSS / Atom 订阅（政府 / 央行 / 监管机构 / 媒体官方 feed）。"""
+    raw, _charset = _fetch_bytes(url, headers)
+    # 交给 XML 解析器按声明的 encoding 解码（bytes 入参），避免二次转码破坏非 UTF-8 订阅。
+    return _parse_feed(raw, limit, strip_suffix)
+
+
+def _filter_page_links(links, pattern: str, base_url: str, limit: int, min_len: int = 6) -> list:
+    """从列表页 (href, text) 中筛出条目：链接正则匹配 + 相对链接补全 + 去重 + 过滤导航短词。纯函数。"""
+    rx = re.compile(pattern)
+    seen, items = set(), []
+    for href, text in links:
+        if not href:
+            continue
+        full = urljoin(base_url, href.strip())
+        if not rx.search(full) or full in seen:
+            continue
+        title = _clean_title(html.unescape(text))
+        # 「更多」「视频」「致辞全文」这类挂在同一条目上的短锚文本不是标题，跳过。
+        if len(title) < min_len:
+            continue
+        seen.add(full)
+        items.append({"title": title, "url": full})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _collect_page(url: str, pattern: str, limit: int, headers: dict | None = None) -> list:
+    """抓取服务端渲染的政策列表页（国务院 / 部委「政策发布」栏目），按链接正则取条目。"""
+    raw = _fetch(url, headers)
+    parser = LinkCollector()
+    parser.feed(raw)
+    return _filter_page_links(parser.links, pattern, url, limit)
+
+
+# ---------------------------------------------------------------- 公民科技 · 政治透明度 抓取器
+# g0v 生态的立法院开放 API 与 EquityStack 公开接口都是 JSON，这里只取公开条目做标题化。
+
+_LY_BILLS_API = "https://ly.govapi.tw/v2/bills"
+_EQUITYSTACK_API = "https://equitystack.org/api"
+
+
+def _format_ly_bills(data: dict, limit: int) -> list:
+    """立法院 API v2 /bills 响应 → 条目：〔議案狀態〕議案名稱（提案單位/提案委員）。纯函数。"""
+    items = []
+    for bill in (data or {}).get("bills", []) or []:
+        name = _collapse(str(bill.get("議案名稱") or ""))
+        if not name:
+            continue
+        if len(name) > 90:
+            name = name[:89] + "…"
+        status = _collapse(str(bill.get("議案狀態") or ""))
+        proposer = _collapse(str(bill.get("提案單位/提案委員") or ""))
+        title = f"〔{status}〕{name}" if status else name
+        if proposer:
+            title += f"（{proposer}）"
+        items.append({"title": title, "url": str(bill.get("url") or "")})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _collect_ly_bills(limit: int) -> list:
+    """g0v 生态「立法院 API」：最新進度的議案（法律案 / 預算案等）。"""
+    url = f"{_LY_BILLS_API}?limit={min(max(int(limit), 1), 50)}"
+    return _format_ly_bills(_get_json(url), limit)
+
+
+def _format_equitystack_promises(data, limit: int) -> list:
+    """EquityStack /api/promises → 条目：[状态] 承诺标题（议题 · 总统）。按最近动作日期倒序。纯函数。"""
+    rows = data.get("items") if isinstance(data, dict) else data
+    rows = [r for r in (rows or []) if isinstance(r, dict) and r.get("title")]
+    rows.sort(key=lambda r: str(r.get("latest_action_date") or r.get("promise_date") or ""), reverse=True)
+    items = []
+    for row in rows:
+        title = _collapse(str(row["title"]))
+        status = _collapse(str(row.get("status") or ""))
+        extras = [x for x in (_collapse(str(row.get("topic") or "")), _collapse(str(row.get("president") or ""))) if x]
+        text = f"[{status}] {title}" if status else title
+        if extras:
+            text += f"（{' · '.join(extras)}）"
+        slug = str(row.get("slug") or "")
+        items.append({"title": text, "url": f"https://equitystack.org/promises/{slug}" if slug else ""})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _collect_equitystack_promises(limit: int) -> list:
+    """EquityStack：政治人物承诺 → 行动 → 结果 的追踪记录（公开接口）。"""
+    return _format_equitystack_promises(_get_json(f"{_EQUITYSTACK_API}/promises"), limit)
+
+
+def _format_equitystack_bills(data, limit: int) -> list:
+    """EquityStack /api/future-bills → 条目：法案号｜法案名（状态 · 最新动作）。纯函数。"""
+    rows = data.get("items") if isinstance(data, dict) else data
+    items = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        tracked = [b for b in (row.get("tracked_bills") or []) if isinstance(b, dict)]
+        bill = tracked[0] if tracked else {}
+        title = _collapse(str(bill.get("title") or row.get("title") or ""))
+        if not title:
+            continue
+        number = _collapse(str(bill.get("bill_number") or ""))
+        status = _collapse(str(bill.get("status") or row.get("status") or ""))
+        action = _collapse(str(bill.get("latest_action") or ""))
+        text = f"{number}｜{title}" if number else title
+        tail = " · ".join(x for x in (status, action) if x)
+        if tail:
+            text += f"（{tail}）"
+        items.append({"title": text, "url": str(bill.get("url") or "")})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _collect_equitystack_bills(limit: int) -> list:
+    """EquityStack：与政策承诺挂钩的国会法案追踪（Congress.gov 数据）。"""
+    return _format_equitystack_bills(_get_json(f"{_EQUITYSTACK_API}/future-bills"), limit)
+
+
 # 收集器函数映射表
 _COLLECTORS = {
     "zhihu": _collect_zhihu,
@@ -480,58 +978,96 @@ _COLLECTORS = {
     "hupu": _collect_hupu,
     "aihot": _collect_aihot,
     "google_news": _collect_google_news,
+    "ly_bills": _collect_ly_bills,
+    "equitystack_promises": _collect_equitystack_promises,
+    "equitystack_bills": _collect_equitystack_bills,
 }
+
+# 抓取过程中允许吞掉的异常：网络 / 超时 / 解析失败都回退演示数据；其他异常照常抛出以暴露 bug。
+_FETCH_ERRORS = (HTTPError, URLError, TimeoutError, OSError, HTTPException,
+                 ValueError, KeyError, TypeError, ET.ParseError, json.JSONDecodeError)
+
+# 并发抓取线程数（源之间互不依赖；BRIEF_FETCH_WORKERS=1 可退回串行）。
+FETCH_WORKERS_DEFAULT = 8
+
+
+def fetch_workers() -> int:
+    raw = (os.environ.get("BRIEF_FETCH_WORKERS") or "").strip()
+    if raw.isdigit() and int(raw) >= 1:
+        return int(raw)
+    return FETCH_WORKERS_DEFAULT
+
+
+def _collect_live(meta: dict, limit: int) -> list:
+    """按元信息实际抓取（不含兜底）：collector → feed → page → channel。"""
+    if "collector" in meta:
+        func = _COLLECTORS.get(meta["collector"])
+        return func(limit) if func else []
+    if "feed" in meta:
+        return _collect_feed(meta["feed"], limit, meta.get("headers"), meta.get("strip_suffix", ""))
+    if "page" in meta:
+        return _collect_page(meta["page"], meta["pattern"], limit, meta.get("headers"))
+    if "channel" in meta:
+        return _parse_channel(meta["channel"], meta["origin"], limit)
+    return []
 
 
 def collect_one(name: str, limit: int | None = None) -> list:
-    """抓取单个源：自定义收集器 / 聚合通道 → 演示数据兜底。
+    """抓取单个源：自定义收集器 / RSS·Atom 订阅 / 政府列表页 / 聚合通道 → 演示数据兜底。
 
     ``limit`` 缺省时按推送口径自动取（会员 10 万字 → 20 条，普通 2 万字 → 5 条），
     可用 ``BRIEF_FETCH_LIMIT`` 显式覆盖。
     """
     limit = default_fetch_limit() if limit is None else limit
-    meta = next((m for m in SOURCE_META if m["name"] == name), None)
+    meta = source_meta(name)
     if not meta:
         return []
-    
-    # 新增的 6 个源使用自定义收集器
-    if "collector" in meta:
-        collector_name = meta["collector"]
-        collector_func = _COLLECTORS.get(collector_name)
-        if collector_func:
-            try:
-                items = collector_func(limit)
-                if items:
-                    return items
-            except (HTTPError, URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
-                pass
-        return _demo_items(name)
-    
-    # 原有的 12 个源使用聚合通道
-    if "channel" in meta:
-        try:
-            items = _parse_channel(meta["channel"], meta["origin"], limit)
-            if items:
-                return items
-        except (HTTPError, URLError, TimeoutError, ValueError):
-            pass
-    
+    try:
+        items = _collect_live(meta, limit)
+        if items:
+            return items
+    except _FETCH_ERRORS:
+        pass
     # 演示数据兜底
     return _demo_items(name)
 
 
+def _limit_for(name: str, limit: int) -> int:
+    # 热搜类榜单：多抓一些，方便「重点关注」与主题统计取样（不小于全局口径）。
+    return max(limit, 10) if name in ("抖音热搜", "微博实时热搜") else limit
+
+
+def _collect_many(names: list, limit: int) -> dict:
+    """并发抓取若干源，返回顺序与 ``names`` 一致；单源意外异常也不拖垮整批（回退演示数据）。"""
+    if not names:
+        return {}
+    workers = min(fetch_workers(), len(names))
+    if workers <= 1:
+        return {name: collect_one(name, _limit_for(name, limit)) for name in names}
+    result = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fetch") as pool:
+        futures = [(name, pool.submit(collect_one, name, _limit_for(name, limit))) for name in names]
+        for name, future in futures:
+            try:
+                result[name] = future.result()
+            except Exception:  # noqa: BLE001 —— 单源崩溃只影响自己
+                result[name] = _demo_items(name)
+    return result
+
+
 def collect_all(limit: int | None = None) -> dict:
-    """依次抓取全部 18 个源。返回 {name: [item, ...]}。
+    """并发抓取全部数据源（五大板块）。返回 {name: [item, ...]}，顺序同 SOURCE_META。
 
     ``limit`` 缺省时按推送口径自动取（见 :func:`default_fetch_limit`）。
     """
     limit = default_fetch_limit() if limit is None else limit
-    result = {}
-    for meta in SOURCE_META:
-        # 热搜类榜单：多抓一些，方便「重点关注」与主题统计取样（不小于全局口径）。
-        cur_limit = max(limit, 10) if meta["name"] in ["抖音热搜", "微博实时热搜"] else limit
-        result[meta["name"]] = collect_one(meta["name"], cur_limit)
-    return result
+    return _collect_many(list(SOURCES), limit)
+
+
+def collect_section(key: str, limit: int | None = None) -> dict:
+    """按板块抓取：只抓 ``key`` 板块下的源（如 policy / world / civic）。未知板块返回 {}。"""
+    limit = default_fetch_limit() if limit is None else limit
+    return _collect_many(sources_in_section(key), limit)
 
 
 # ---------------------------------------------------------------- 开篇 AI 总结引擎
@@ -540,21 +1076,33 @@ def collect_all(limit: int | None = None) -> dict:
 # 如需接入在线大模型，只需覆盖 analyze_brief() 的返回值（字段保持一致即可）。
 
 # (板块标签, 关键词)。一条标题命中任一关键词即计入该主题热度，并按数据源去重计权。
+# 中文关键词按子串匹配；ASCII 关键词大小写不敏感、按单词边界匹配（末尾 * 允许后缀，如 chip* 命中 chips），
+# 这样「AI」不会误命中 SAID / AIR，「gold」不会误命中 Goldman —— 政策 / 媒体板块的英文标题也能正确归类。
 _THEMES = [
     ("AI 算力", ["AI", "人工智能", "算力", "大模型", "数据中心", "OpenAI", "Anthropic",
-                "DeepMind", "GPT", "Claude", "Gemini", "Llama", "机器人", "GPU"]),
-    ("光通信", ["光纤", "光通信", "光缆", "光模块", "古河电工"]),
-    ("半导体", ["半导体", "芯片", "晶圆", "台积电", "英伟达", "AMD"]),
-    ("贵金属", ["黄金", "铂金", "钯金", "白银", "原油", "稀土", "矿产"]),
+                "DeepMind", "GPT*", "ChatGPT", "Claude", "Gemini", "Llama*", "机器人", "GPU*",
+                "data center*", "datacenter*", "robot*", "artificial intelligence"]),
+    ("光通信", ["光纤", "光通信", "光缆", "光模块", "古河电工", "optical fiber", "fiber optic*"]),
+    ("半导体", ["半导体", "芯片", "晶圆", "台积电", "英伟达", "AMD", "chip*", "semiconductor*",
+               "Nvidia", "TSMC", "wafer*"]),
+    ("贵金属", ["黄金", "铂金", "钯金", "白银", "原油", "稀土", "矿产", "gold", "silver", "platinum",
+               "crude", "oil", "rare earth*", "mineral*"]),
     ("美联储", ["美联储", "央行", "加息", "降息", "货币政策", "贝森特", "日元", "汇率",
-               "美元", "逆回购", "流动性", "利率"]),
+               "美元", "逆回购", "流动性", "利率", "Fed", "Federal Reserve", "FOMC", "rate cut*",
+               "rate hike*", "interest rate*", "central bank*", "ECB", "BOJ", "Bank of Japan",
+               "Bank of England", "yen", "dollar", "monetary polic*", "inflation"]),
     ("地缘", ["伊朗", "阿曼", "霍尔木兹", "海峡", "中东", "战争", "制裁", "美伊",
-             "特朗普", "干预"]),
-    ("医药", ["诺和诺德", "医药", "医疗", "GLP", "疫苗", "制药", "临床", "辉瑞"]),
-    ("智驾", ["自动驾驶", "智驾", "智能驾驶", "新能源车", "特斯拉", "L3", "L4"]),
-    ("地产", ["楼市", "地产", "房价", "房企", "豪宅"]),
-    ("消费", ["消费", "零售", "电商", "餐饮", "麦当劳", "宝洁", "亚马逊"]),
-    ("航天", ["SpaceX", "火箭", "卫星", "发射"]),
+             "特朗普", "干预", "Iran", "Middle East", "war", "sanction*", "Trump", "NATO",
+             "Ukraine", "Russia*", "Israel*", "Gaza", "Taiwan", "geopolitic*", "military"]),
+    ("医药", ["诺和诺德", "医药", "医疗", "GLP*", "疫苗", "制药", "临床", "辉瑞", "pharma*", "drug*",
+             "vaccine*", "FDA", "Novo Nordisk", "Pfizer", "biotech*"]),
+    ("智驾", ["自动驾驶", "智驾", "智能驾驶", "新能源车", "特斯拉", "L3", "L4", "Tesla",
+             "autonomous driving", "self-driving", "electric vehicle*", "EV", "EVs"]),
+    ("地产", ["楼市", "地产", "房价", "房企", "豪宅", "housing", "property market", "real estate",
+             "mortgage*", "home price*"]),
+    ("消费", ["消费", "零售", "电商", "餐饮", "麦当劳", "宝洁", "亚马逊", "consumer*", "retail*",
+             "e-commerce", "Amazon", "Walmart", "McDonald's"]),
+    ("航天", ["SpaceX", "火箭", "卫星", "发射", "rocket*", "satellite*", "spacecraft"]),
 ]
 
 _BULLISH = ["上涨", "暴涨", "大涨", "涨超", "涨逾", "涨幅扩大", "创新高", "新高", "首破",
@@ -563,6 +1111,36 @@ _BULLISH = ["上涨", "暴涨", "大涨", "涨超", "涨逾", "涨幅扩大", "�
 _BEARISH = ["下跌", "暴跌", "重挫", "新低", "危机", "风险", "警示", "警惕", "债务", "逾期",
             "诉讼", "立案", "下调", "减持", "冲击", "利空", "泡沫", "争议", "放缓", "衰退",
             "疲软", "贬值", "缩水", "承压", "亏损", "负增长", "暴雷", "抛售"]
+# 英文多空词（单词边界匹配，末尾 * 允许后缀）：让英文政策 / 媒体标题也参与多空统计。
+_BULLISH_EN = ["surge*", "soar*", "rall*", "jump*", "record high", "all-time high", "gain*", "rebound*",
+               "upgrade*", "boost*", "beats estimates", "beat estimates", "stimulus", "rate cut*", "recover*", "growth",
+               "expand*", "approve*", "approval", "deal", "agree*", "relief", "climb*", "rise*", "rose"]
+_BEARISH_EN = ["plunge*", "slump*", "tumble*", "drop*", "fall*", "fell", "sink*", "sank", "crash*",
+               "selloff", "sell-off", "crisis", "risk*", "warn*", "sanction*", "ban", "bans", "banned",
+               "probe*", "lawsuit*", "fraud", "default*", "recession", "layoff*", "tariff*", "curb*",
+               "crackdown", "shutdown", "war", "attack*", "kill*", "threat*", "cuts forecast",
+               "downgrade*", "slash*", "loss", "losses", "decline*", "weak*", "fear*", "turmoil"]
+
+
+def _kw_hit(title: str, title_lower: str, keyword: str) -> bool:
+    """主题 / 多空关键词命中：中文按子串（原文），ASCII 按单词边界（小写，末尾 * 允许后缀）。"""
+    if keyword.isascii():
+        return _policy_hit(title_lower, keyword)
+    return keyword in title
+
+
+def _direction(title: str, title_lower: str | None = None) -> int:
+    """单条标题多空方向：多方词命中数 vs 空方词命中数 → 1 / -1 / 0（中英文词库合并计票）。"""
+    title_lower = title.lower() if title_lower is None else title_lower
+    up = sum(1 for word in _BULLISH if word in title)
+    up += sum(1 for word in _BULLISH_EN if _policy_hit(title_lower, word))
+    down = sum(1 for word in _BEARISH if word in title)
+    down += sum(1 for word in _BEARISH_EN if _policy_hit(title_lower, word))
+    if up > down:
+        return 1
+    if down > up:
+        return -1
+    return 0
 
 
 def analyze_brief(brief: dict) -> dict:
@@ -595,26 +1173,28 @@ def analyze_brief(brief: dict) -> dict:
     # 「AI 板块机会」板块的证据留档：每条命中主题的标题（含方向/来源/链接），供按主题回溯支撑新闻。
     theme_evidence = {tag: [] for tag in theme_sources}
     bull = bear = 0
+    # 板块口径：每个板块贡献了多少条标题 / 多少个有内容的源（供页脚与 /api 展示，不参与方向判断）。
+    section_items = {key: 0 for key in SECTION_KEYS}
+    section_sources = {key: set() for key in SECTION_KEYS}
 
     for name, items in (brief or {}).items():
+        sec = section_of(name)
         for item in items or []:
             title = item.get("title", "") or ""
             if not title:
                 continue
-            # 多空：单条标题按「多方词命中数 vs 空方词命中数」判定方向，避免单条重复计数。
-            up = sum(1 for word in _BULLISH if word in title)
-            down = sum(1 for word in _BEARISH if word in title)
-            if up > down:
+            section_items[sec] = section_items.get(sec, 0) + 1
+            section_sources.setdefault(sec, set()).add(name)
+            title_lower = title.lower()
+            # 多空：单条标题按「多方词命中数 vs 空方词命中数」判定方向（中英文词库），避免单条重复计数。
+            direction = _direction(title, title_lower)
+            if direction > 0:
                 bull += 1
-                direction = 1
-            elif down > up:
+            elif direction < 0:
                 bear += 1
-                direction = -1
-            else:
-                direction = 0
             # 主题：命中即累计，并记录出现在哪些数据源（跨源命中 = 更强信号）。
             for tag, keywords in _THEMES:
-                if any(keyword in title for keyword in keywords):
+                if any(_kw_hit(title, title_lower, keyword) for keyword in keywords):
                     theme_mentions[tag] += 1
                     theme_sources[tag].add(name)
                     if direction > 0:
@@ -719,6 +1299,12 @@ def analyze_brief(brief: dict) -> dict:
         "flow": flow,
         "points": points,
         "policy": analyze_policy(brief),
+        # 板块口径：[{key, label, items, sources}]，按 SECTIONS 顺序，只列有内容的板块。
+        "sections": [
+            {"key": key, "label": SECTION_LABELS.get(key, key),
+             "items": section_items.get(key, 0), "sources": len(section_sources.get(key, ()))}
+            for key in SECTION_KEYS if section_items.get(key, 0) > 0
+        ],
     }
 
 
@@ -807,29 +1393,46 @@ def _compose_flow(sectors_up: list, sectors_down: list, top_themes: list) -> str
 _POLICY_BUCKETS = [
     ("货币政策 · 美联储", ["美联储", "Fed", "FOMC", "Powell", "鲍威尔", "贝森特", "Bessent", "议息",
                           "利率决议", "点阵图", "美债收益率", "联邦基金利率", "鹰派", "鸽派",
-                          "hawkish", "dovish"]),
-    ("央行 · 流动性", ["央行", "中国人民银行", "PBOC", "CENTRAL BANK", "逆回购", "买断式", "净投放",
-                     "MLF", "LPR", "降准", "降息", "中期借贷", "再贷款", "流动性", "资金面", "Shibor"]),
+                          "hawkish", "dovish", "Federal Reserve", "interest rate*", "rate cut*", "rate hike*",
+                          "monetary polic*", "ECB", "BOJ", "Bank of Japan", "Bank of England", "Lagarde", "Ueda"]),
+    ("央行 · 流动性", ["央行", "中国人民银行", "PBOC", "central bank*", "逆回购", "买断式", "净投放",
+                     "MLF", "LPR", "降准", "降息", "中期借贷", "再贷款", "流动性", "资金面", "Shibor",
+                     "liquidity", "reserve requirement*"]),
     ("汇率与外汇干预", ["汇率", "日元", "人民币", "yuan", "美元指数", "在岸", "离岸", "外汇干预",
-                       "弱日元", "套利交易", "抛美债", "yen", "fx"]),
+                       "弱日元", "套利交易", "抛美债", "yen", "fx", "forex", "exchange rate*", "currenc*",
+                       "rate check", "dollar index"]),
     ("财政 · 关税与债务", ["财政", "关税", "tariff*", "加征", "国债", "赤字", "deficit", "预算", "专项债",
-                         "特别国债", "债务上限", "退税", "减税"]),
+                         "特别国债", "债务上限", "退税", "减税", "税收", "增值税", "treasury", "budget*",
+                         "fiscal", "tax", "taxes", "taxation", "debt ceiling", "spending bill", "duties",
+                         "national debt", "government bond*"]),
     ("产业与科技政策", ["产业政策", "补贴", "subsid*", "出口管制", "export control*", "国产替代", "自主可控",
                        "强标", "准入", "白名单", "试点", "规划", "专项", "国家大基金", "反垄断", "antitrust",
-                       "数据中心设备"]),
+                       "数据中心设备", "行动方案", "实施方案", "指导意见", "两用物项", "反倾销",
+                       "industrial polic*", "chips act", "AI safety", "AI Act", "AI regulation", "anti-dumping",
+                       "export ban*", "tech polic*", "data protection"]),
     ("资本市场监管", ["证监会", "CSRC", "吴清", "港交所", "交易所", "IPO", "发行上市", "内地企业香港上市",
                      "退市", "股份回购", "股票回购", "分红", "减持", "增持", "立案", "监管", "regulator*", "合规", "信披",
-                     "新规", "征求意见"]),
+                     "新规", "征求意见", "财务造假", "处罚", "SEC", "FCA", "regulation*", "enforcement", "rulemaking",
+                     "disclosure", "delist*", "compliance", "charges", "charged", "exemptive relief", "consultation"]),
     ("地缘与贸易政策", ["伊朗", "Iran", "阿曼", "霍尔木兹", "制裁", "sanction*", "停火", "ceasefire", "谈判",
-                       "中东", "俄乌", "特朗普", "Trump", "白宫", "战争", "冲突", "禁止进口", "使馆"]),
-    ("地产与地方政策", ["楼市", "地产", "房价", "房企", "限购", "限售", "公积金", "城中村", "保障房", "收储"]),
+                       "中东", "俄乌", "特朗普", "Trump", "白宫", "战争", "冲突", "禁止进口", "使馆", "经贸磋商",
+                       "反制", "White House", "NATO", "Ukraine", "Russia", "Israel", "Gaza", "Taiwan", "Pentagon",
+                       "trade deal*", "trade talk*", "trade war", "Congress", "Senate", "election*", "midterm*",
+                       "Greenland", "summit", "Xi Jinping", "Beijing", "national emergency", "executive order*",
+                       "presidential", "military"]),
+    ("地产与地方政策", ["楼市", "地产", "房价", "房企", "限购", "限售", "公积金", "城中村", "保障房", "收储",
+                       "城市更新", "housing", "mortgage*", "property market", "real estate"]),
 ]
 
 # 政策取向词库：鹰派 = 收紧（对估值与利率敏感资产偏压制），鸽派 = 宽松 / 扶持（偏支撑）。
 _HAWKISH = ["鹰派", "加息", "缩表", "收紧", "维持高利率", "强硬", "加征关税", "制裁", "增额关税",
-            "限制", "禁止进口", "抛美债", "强势美元", "hawkish", "tighten*", "hike*", "sanction*", "tariff*"]
+            "限制", "禁止进口", "抛美债", "强势美元", "hawkish", "tighten*", "hike*", "sanction*", "tariff*",
+            "restrictive", "crackdown", "curb*", "ban", "bans", "banned", "probe*", "penalt*", "export control*",
+            "blacklist*", "reparations", "duties", "anti-dumping", "反倾销", "反制", "查处", "处罚"]
 _DOVISH = ["鸽派", "转鸽", "降息", "降准", "宽松", "扩表", "放水", "支持", "扶持", "补贴", "减税",
-           "退税", "豁免", "净流入", "流动性支持", "dovish", "easing", "stimulus", "rate cut*"]
+           "退税", "豁免", "净流入", "流动性支持", "dovish", "easing", "stimulus", "rate cut*", "relief",
+           "bailout", "tax cut*", "exempt*", "waiver*", "subsid*", "lifts sanctions", "lift sanctions",
+           "lifted sanctions", "促进", "支持实体", "优惠", "促消费", "扩容"]
 # 否定词：标题常用「不再那么鸽派」表述立场反转，命中否定词时把取向票翻转计到对面。
 # 「近指」只看紧邻的前两个字符（避免「美元不涨，鸽派升温」被误翻转），「远指」看前 24 字符。
 _POLICY_NEG_NEAR = ["不", "非", "未", "无"]
@@ -841,14 +1444,19 @@ def _policy_norm(text: str) -> str:
     return (text or "").lower()
 
 
+@lru_cache(maxsize=2048)
+def _ascii_keyword_regex(kw: str):
+    """ASCII 关键词 → 单词边界正则（末尾 * 允许后缀）。词库固定，缓存编译结果。"""
+    core = re.escape(kw[:-1] if kw.endswith("*") else kw)
+    tail = "" if kw.endswith("*") else r"(?![a-z0-9])"
+    return re.compile(rf"(?<![a-z0-9]){core}{tail}")
+
+
 def _policy_findings(title_lower: str, keyword: str):
     """逐个返回关键词在标题中的命中位置：ASCII 词按单词边界，中文按子串。"""
     kw = keyword.lower()
     if kw.isascii():
-        core = re.escape(kw[:-1] if kw.endswith("*") else kw)
-        tail = "" if kw.endswith("*") else r"(?![a-z0-9])"
-        pattern = re.compile(rf"(?<![a-z0-9]){core}{tail}")
-        for match in pattern.finditer(title_lower):
+        for match in _ascii_keyword_regex(kw).finditer(title_lower):
             yield match.start()
         return
     start = 0
@@ -959,10 +1567,8 @@ def analyze_policy(brief: dict) -> dict:
             hits = _policy_tags(title_lower)
             if not hits:
                 continue
-            # 多空：单条标题按「多方词命中数 vs 空方词命中数」判定方向。
-            up = sum(1 for word in _BULLISH if word in title)
-            down = sum(1 for word in _BEARISH if word in title)
-            direction = 1 if up > down else (-1 if down > up else 0)
+            # 多空：单条标题按「多方词命中数 vs 空方词命中数」判定方向（中英文词库）。
+            direction = _direction(title, title_lower)
             # 取向：鹰派 / 鸽派票（否定前缀自动翻转，如「不再那么鸽派」计为鹰派）。
             hawk_votes, dove_votes = _policy_stance_votes(title_lower)
             is_hawk = hawk_votes > dove_votes
@@ -2505,37 +3111,50 @@ def build_html(
     )
 
     def _news_card(per_source: int) -> str:
-        """正文最后的「全网快讯」列表：每源最多 ``per_source`` 条，只显示标题、隐藏来源。
+        """正文最后的「全网快讯」列表：按板块分组，每源最多 ``per_source`` 条，只显示标题、隐藏来源。
 
-        - 按数据源顺序取每源前 ``per_source`` 条，再跨源去重（同一条新闻被多源转载只留一条）；
+        - 按「板块 → 数据源」顺序取每源前 ``per_source`` 条，再跨源去重（同一条新闻被多源转载只留一条）；
+        - 每个板块一行小标题（财经快讯 / 热搜热点 / 政策发布 · 官方信息源 / 全球政经媒体 / 公民科技 · 政治透明度），
+          条目编号全表连续；板块名不是任何数据源名称，仍不暴露源头；
         - 不输出来源名称、也不带跳转链接，避免任何形式暴露源头；
         - ``per_source`` 为 0 或当天没有任何快讯时整段省略，不占推送字符额度。
         """
         if per_source <= 0:
             return ""
-        names = [name for name in SOURCES if name in brief]
-        names += [name for name in brief if name not in SOURCES]
-        rows, seen = [], set()
-        for name in names:
-            for item in (brief.get(name) or [])[:per_source]:
-                title = str((item or {}).get("title") or "").strip()
-                if not title:
-                    continue
-                key = _news_key(title)
-                if key in seen:
-                    continue
-                seen.add(key)
-                rows.append(
-                    f'<tr><td class="td-n">{len(rows) + 1:02d}</td>'
-                    f'<td class="td-t">{_hl(_trunc(title, 60))}</td></tr>'
-                )
-        if not rows:
+        # 未登记的源（调用方自定义 brief）归到最后一个「其他」分组，仍匿名列出。
+        grouped = [(sec["label"], [n for n in sources_in_section(sec["key"]) if n in brief]) for sec in SECTIONS]
+        extra = [name for name in brief if name not in SOURCES]
+        if extra:
+            grouped.append(("其他", extra))
+        rows, seen, total = [], set(), 0
+        for label, names in grouped:
+            body = []
+            for name in names:
+                for item in (brief.get(name) or [])[:per_source]:
+                    title = str((item or {}).get("title") or "").strip()
+                    if not title:
+                        continue
+                    key = _news_key(title)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    total += 1
+                    body.append(
+                        f'<tr><td class="td-n">{total:02d}</td>'
+                        f'<td class="td-t">{_hl(_trunc(title, 60))}</td></tr>'
+                    )
+            if body:
+                rows.append(f'<tr><td colspan="2" class="td-hdr"><span class="tag">{_esc(label)}</span> '
+                            f'<span class="sub">{len(body)} 条</span></td></tr>')
+                rows.extend(body)
+        if not total:
             return ""
+        used = sum(1 for _label, names in grouped if names)
         return (
             f'<div class="card"><div class="hdr"><span class="tag">全网快讯</span>'
-            f'<span class="sub">境内 × 境外 · 每源精选 {per_source} 条 · 共 {len(rows)} 条</span></div>'
+            f'<span class="sub">境内 × 境外 · {used} 个板块 · 每源精选 {per_source} 条 · 共 {total} 条</span></div>'
             f'<table class="tbl">{"".join(rows)}</table>'
-            f'<div class="ftr">按数据源顺序取每源前 {per_source} 条、跨源去重后统一列出，不标注具体来源。</div></div>'
+            f'<div class="ftr">按「板块 → 数据源」顺序取每源前 {per_source} 条、跨源去重后分组列出，不标注具体来源。</div></div>'
         )
 
     def _render_full(max_per_src: int | None) -> str:
