@@ -53,18 +53,26 @@ class ParseChannelTest(unittest.TestCase):
 
 
 class SourceDefinitionTest(unittest.TestCase):
-    def test_eighteen_sources(self):
-        self.assertEqual(len(sources.SOURCES), 18)
-        self.assertEqual(len(sources.SOURCE_META), 18)
+    def test_forty_eight_sources_in_five_sections(self):
+        # 12 财经快讯 + 6 热搜热点 + 14 政策发布 · 官方信息源 + 12 全球政经媒体 + 4 公民科技 · 政治透明度。
+        self.assertEqual(len(sources.SOURCES), 48)
+        self.assertEqual(len(sources.SOURCE_META), 48)
+        self.assertEqual(len(set(sources.SOURCES)), 48, "数据源名称必须唯一")
         names = [m["name"] for m in sources.SOURCE_META]
         self.assertEqual(names, sources.SOURCES)
+        counts = {sec["key"]: sec["count"] for sec in sources.section_catalog()}
+        self.assertEqual(counts, {"finance": 12, "trending": 6, "policy": 14, "world": 12, "civic": 4})
 
-    def test_every_source_has_origin_or_collector(self):
+    def test_every_source_has_a_fetch_method(self):
         for meta in sources.SOURCE_META:
-            # 原有的 12 个源有 origin 和 channel，新增的 6 个源有 collector
+            # 四选一：rebang 聚合通道（origin+channel）/ 自定义收集器 / RSS·Atom 订阅 / 列表页+正则。
             has_channel = "channel" in meta and "origin" in meta
-            has_collector = "collector" in meta
-            self.assertTrue(has_channel or has_collector, f"{meta['name']} 缺少 channel 或 collector")
+            has_collector = "collector" in meta and meta["collector"] in sources._COLLECTORS
+            has_feed = "feed" in meta
+            has_page = "page" in meta and "pattern" in meta
+            self.assertTrue(has_channel or has_collector or has_feed or has_page,
+                            f"{meta['name']} 缺少抓取方式")
+            self.assertIn(meta.get("section"), sources.SECTION_KEYS, f"{meta['name']} 板块归属无效")
 
     def test_demo_fallback(self):
         for name in sources.SOURCES:
@@ -79,6 +87,241 @@ class SourceDefinitionTest(unittest.TestCase):
         # 新增的源也应该有兜底数据
         items = sources.collect_one("知乎热榜")
         self.assertGreaterEqual(len(items), 1)
+
+
+_SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Bloomberg Politics</title>
+<item><title><![CDATA[US Reaches Greenland Deal to End Row That Threatened NATO]]></title>
+<link>https://www.bloomberg.com/news/articles/2026-09-19/greenland</link></item>
+<item><title>China Slams US Law Tightening Sanctions on Russia and Iran</title>
+<link>https://www.bloomberg.com/news/articles/2026-09-19/sanctions</link></item>
+<item><title>China Slams US Law Tightening Sanctions on Russia and Iran</title>
+<link>https://www.bloomberg.com/news/articles/2026-09-19/sanctions-dup</link></item>
+<item><title>German general Breuer elected to head top NATO military body - Reuters</title>
+<link>https://news.google.com/rss/articles/abc</link></item>
+</channel></rss>"""
+
+_SAMPLE_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>HM Treasury - Activity on GOV.UK</title>
+<entry><title>Chancellor sets date for Autumn Budget 2026</title>
+<link rel="alternate" type="text/html" href="https://www.gov.uk/government/news/autumn-budget-2026"/></entry>
+<entry><title>Pensions investment reform: consultation response</title>
+<link rel="self" href="https://www.gov.uk/self"/>
+<link rel="alternate" href="https://www.gov.uk/government/consultations/pensions"/></entry>
+</feed>"""
+
+# 模拟 gov.cn「最新政策」列表页：相对链接 + 同一条目上的短锚文本 + 栏目导航噪音。
+_SAMPLE_GOV_HTML = """
+<html><body>
+<a href="https://www.gov.cn/zhengce/">最新政策</a>
+<ul>
+<li><a href="./202609/content_7081441.htm">国务院办公厅转发文化和旅游部等部门《关于促进房车消费的若干措施》的通知</a>
+    <a href="./202609/content_7081441.htm">解读</a></li>
+<li><a href="/zhengce/content/202609/content_7081356.htm">国务院办公厅关于进一步加强烟花爆竹全链条安全监管的意见</a></li>
+<li><a href="https://www.gov.cn/zhengce/jiedu/202609/content_7081473.htm">解读：国务院常务会议部署实施医疗康复护理扩容提升工程</a></li>
+<li><a href="https://www.gov.cn/xinwen/2026/other.htm">不是政策条目的其他链接</a></li>
+</ul>
+</body></html>
+"""
+
+
+class SectionTest(unittest.TestCase):
+    """五大板块：板块目录、按板块抓取、通用 RSS·Atom / 列表页抓取器、公民科技 JSON 解析、快讯分组渲染。"""
+
+    def test_section_catalog(self):
+        catalog = sources.section_catalog()
+        self.assertEqual([sec["key"] for sec in catalog], ["finance", "trending", "policy", "world", "civic"])
+        self.assertEqual(sum(sec["count"] for sec in catalog), len(sources.SOURCES))
+        labels = [sec["label"] for sec in catalog]
+        # 板块名不能与任何数据源名相同，否则「全网快讯」分组标题会暴露来源。
+        for label in labels:
+            self.assertNotIn(label, sources.SOURCES)
+        self.assertEqual(sources.section_of("国务院 最新政策"), "policy")
+        self.assertEqual(sources.section_of("Bloomberg 政治"), "world")
+        self.assertEqual(sources.section_of("g0v 立法院議案"), "civic")
+        self.assertEqual(sources.section_of("金十数据"), "finance")
+        self.assertEqual(sources.section_of("未登记的源"), "finance")
+
+    def test_collect_section_falls_back_offline(self):
+        # 无外网环境按板块抓取也能整板块回退演示数据，且顺序与 SOURCE_META 一致。
+        out = sources.collect_section("policy")
+        self.assertEqual(list(out), sources.sources_in_section("policy"))
+        self.assertTrue(all(len(items) >= 1 for items in out.values()))
+        self.assertEqual(sources.collect_section("no-such-section"), {})
+
+    def test_collect_all_keeps_source_order_when_parallel(self):
+        os.environ["BRIEF_FETCH_WORKERS"] = "6"
+        try:
+            self.assertEqual(sources.fetch_workers(), 6)
+            out = sources.collect_all()
+        finally:
+            os.environ.pop("BRIEF_FETCH_WORKERS", None)
+        self.assertEqual(list(out), sources.SOURCES)
+        self.assertTrue(all(len(items) >= 1 for items in out.values()))
+        self.assertEqual(sources.fetch_workers(), sources.FETCH_WORKERS_DEFAULT)
+
+    def test_parse_feed_rss_dedupes_and_strips_suffix(self):
+        items = sources._parse_feed(_SAMPLE_RSS, limit=10, strip_suffix=" - Reuters")
+        titles = [it["title"] for it in items]
+        self.assertEqual(titles, [
+            "US Reaches Greenland Deal to End Row That Threatened NATO",
+            "China Slams US Law Tightening Sanctions on Russia and Iran",
+            "German general Breuer elected to head top NATO military body",
+        ])
+        self.assertEqual(items[0]["url"], "https://www.bloomberg.com/news/articles/2026-09-19/greenland")
+        self.assertEqual(len(sources._parse_feed(_SAMPLE_RSS, limit=1)), 1)
+        # bytes 入参（真实抓取按声明 encoding 解码）同样可用。
+        self.assertEqual(len(sources._parse_feed(_SAMPLE_RSS.encode("utf-8"), limit=10)), 3)
+
+    def test_parse_feed_atom_prefers_alternate_link(self):
+        items = sources._parse_feed(_SAMPLE_ATOM, limit=10)
+        self.assertEqual([it["title"] for it in items], [
+            "Chancellor sets date for Autumn Budget 2026",
+            "Pensions investment reform: consultation response",
+        ])
+        self.assertEqual(items[0]["url"], "https://www.gov.uk/government/news/autumn-budget-2026")
+        self.assertEqual(items[1]["url"], "https://www.gov.uk/government/consultations/pensions")
+
+    def test_parse_feed_rejects_garbage(self):
+        with self.assertRaises(sources.ET.ParseError):
+            sources._parse_feed("<html><body>not a feed", limit=5)
+        # collect_one 会把解析失败吞掉并回退演示数据。
+        self.assertTrue(issubclass(sources.ET.ParseError, sources._FETCH_ERRORS))
+
+    def test_filter_page_links_resolves_relative_and_skips_nav(self):
+        parser = sources.LinkCollector()
+        parser.feed(_SAMPLE_GOV_HTML)
+        items = sources._filter_page_links(parser.links, sources._GOVCN_PATTERN,
+                                           "https://www.gov.cn/zhengce/zuixin/", limit=10)
+        urls = [it["url"] for it in items]
+        self.assertEqual(urls, [
+            "https://www.gov.cn/zhengce/zuixin/202609/content_7081441.htm",
+            "https://www.gov.cn/zhengce/content/202609/content_7081356.htm",
+            "https://www.gov.cn/zhengce/jiedu/202609/content_7081473.htm",
+        ])
+        titles = [it["title"] for it in items]
+        self.assertNotIn("解读", titles)          # 短锚文本不当标题
+        self.assertNotIn("最新政策", titles)      # 栏目导航不匹配条目正则
+        self.assertEqual(len(sources._filter_page_links(parser.links, sources._GOVCN_PATTERN,
+                                                        "https://www.gov.cn/zhengce/zuixin/", limit=2)), 2)
+
+    def test_ministry_patterns_match_real_link_shapes(self):
+        meta = {m["name"]: m for m in sources.SOURCE_META}
+        cases = {
+            "发改委 政策发布": "https://www.ndrc.gov.cn/xxgk/zcfb/tz/202609/t20260917_1407686.html",
+            "财政部 政策发布": "http://gks.mof.gov.cn/guizhangzhidu/202609/t20260911_3997286.htm",
+            "商务部 政策发布": "https://www.mofcom.gov.cn/zwgk/zcfb/art/2026/art_98f578b88d3f47538d7b516745faf230.html",
+            "证监会 新闻发布": "https://www.csrc.gov.cn/csrc/c100028/c7659506/content.shtml",
+        }
+        import re
+        for name, url in cases.items():
+            self.assertTrue(re.search(meta[name]["pattern"], url), name)
+        # 解读 / 旧栏目链接不算条目。
+        self.assertFalse(re.search(meta["发改委 政策发布"]["pattern"], "https://www.ndrc.gov.cn/xxgk/jd/jd/202609/t20260917_1.html"))
+        self.assertFalse(re.search(meta["证监会 新闻发布"]["pattern"], "https://www.csrc.gov.cn/csrc/c100029/c7473708/content.shtml"))
+
+    def test_decode_honours_meta_charset(self):
+        gbk_page = '<html><head><meta charset="gb2312"></head><body>财政部 政策发布</body></html>'.encode("gb18030")
+        self.assertIn("财政部 政策发布", sources._decode(gbk_page))
+        self.assertIn("财政部", sources._decode("财政部".encode("utf-8"), "utf-8"))
+        self.assertIn("财政部", sources._decode("财政部".encode("utf-8"), "no-such-charset"))
+
+    def test_format_ly_bills(self):
+        data = {"bills": [
+            {"議案名稱": "「食品安全衛生管理法部分條文修正草案」，請審議案。", "議案狀態": "排入院會",
+             "提案單位/提案委員": "本院委員陳菁徽等17人", "url": "https://ppg.ly.gov.tw/ppg/bills/202110231310000/details"},
+            {"議案名稱": "", "議案狀態": "x"},
+            {"議案名稱": "Ａ" * 120, "url": ""},
+        ]}
+        items = sources._format_ly_bills(data, limit=10)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["title"], "〔排入院會〕「食品安全衛生管理法部分條文修正草案」，請審議案。（本院委員陳菁徽等17人）")
+        self.assertEqual(items[0]["url"], "https://ppg.ly.gov.tw/ppg/bills/202110231310000/details")
+        self.assertTrue(items[1]["title"].endswith("…"))
+        self.assertEqual(sources._format_ly_bills({}, limit=5), [])
+
+    def test_format_equitystack_promises_sorted_by_latest_action(self):
+        data = {"items": [
+            {"slug": "old", "title": "Older promise", "status": "Partial", "topic": "Education",
+             "president": "Donald J. Trump", "promise_date": "2025-01-20", "latest_action_date": "2025-04-23"},
+            {"slug": "new", "title": "Newer promise", "status": "Failed", "topic": "Courts",
+             "president": "Donald J. Trump", "promise_date": "2026-04-29", "latest_action_date": "2026-04-29"},
+            {"slug": "none", "title": ""},
+        ]}
+        items = sources._format_equitystack_promises(data, limit=10)
+        self.assertEqual([it["url"] for it in items],
+                         ["https://equitystack.org/promises/new", "https://equitystack.org/promises/old"])
+        self.assertEqual(items[0]["title"], "[Failed] Newer promise（Courts · Donald J. Trump）")
+        # 裸数组响应也兼容。
+        self.assertEqual(len(sources._format_equitystack_promises(data["items"], limit=1)), 1)
+
+    def test_format_equitystack_bills(self):
+        data = [{"title": "Reparations study commission", "status": "Idea", "tracked_bills": [
+            {"bill_number": "H.R. 40", "title": "Commission to Study and Develop Reparation Proposals for African Americans Act",
+             "status": "In Committee", "latest_action": "Referred to the House Committee on the Judiciary.",
+             "url": "https://www.congress.gov/bill/118th-congress/hr-bill/40"}]},
+            {"title": "Idea without tracked bill", "status": "Idea", "tracked_bills": []}]
+        items = sources._format_equitystack_bills(data, limit=10)
+        self.assertEqual(items[0]["title"],
+                         "H.R. 40｜Commission to Study and Develop Reparation Proposals for African Americans Act"
+                         "（In Committee · Referred to the House Committee on the Judiciary.）")
+        self.assertEqual(items[0]["url"], "https://www.congress.gov/bill/118th-congress/hr-bill/40")
+        self.assertEqual(items[1]["title"], "Idea without tracked bill（Idea）")
+
+    def test_english_titles_feed_theme_policy_and_direction(self):
+        # 英文政策 / 媒体标题：主题按单词边界归类（AI 不误命中 SAID / AIR），多空与鹰鸽同样计票。
+        ana = sources.analyze_brief({
+            "Bloomberg 政治": [
+                {"title": "China Slams US Law Tightening Sanctions on Russia and Iran", "url": ""},
+                {"title": "Saudi Arabia Issues Rare Air-Raid Alerts for Riyadh", "url": ""},
+            ],
+            "美联储 新闻稿": [{"title": "Federal Reserve issues FOMC statement", "url": ""}],
+            "Financial Times": [{"title": "Gold surges to record high as dollar slides", "url": ""}],
+        })
+        tags = dict((t[0], t) for t in ana["top_themes"])
+        self.assertIn("地缘", tags)
+        self.assertIn("美联储", tags)
+        self.assertIn("贵金属", tags)
+        self.assertNotIn("AI 算力", tags)
+        self.assertIn("贵金属", ana["sectors_up"])
+        self.assertGreaterEqual(ana["signals"], 2)
+        policy = ana["policy"]
+        bucket_tags = {b["tag"] for b in policy["buckets"]}
+        self.assertIn("地缘与贸易政策", bucket_tags)
+        self.assertIn("货币政策 · 美联储", bucket_tags)
+        self.assertEqual(policy["stance"], "偏鹰")
+        # 板块口径：三条来自两个板块。
+        secs = {s["key"]: s for s in ana["sections"]}
+        self.assertEqual(secs["world"]["items"], 3)
+        self.assertEqual(secs["world"]["sources"], 2)
+        self.assertEqual(secs["policy"]["items"], 1)
+
+    def test_demo_policy_sources_hit_policy_buckets(self):
+        brief = {name: sources._demo_items(name) for name in sources.sources_in_section("policy")}
+        p = sources.analyze_policy(brief)
+        self.assertGreaterEqual(p["sources_hit"], 10)
+        self.assertGreaterEqual(p["mentions"], 30)
+
+    def test_news_card_groups_by_section(self):
+        brief = {
+            "金十数据": [{"title": "金十快讯标题一", "url": ""}],
+            "国务院 最新政策": [{"title": "国务院办公厅关于加强中小企业回款难问题治理的通知", "url": ""}],
+            "Bloomberg 政治": [{"title": "US Reaches Greenland Deal to End Row That Threatened NATO", "url": ""}],
+            "外部投稿": [{"title": "调用方额外传入的一条标题", "url": ""}],
+        }
+        out = sources.build_html(brief, **PolicySectionTest._kanpan())
+        card = out[out.index("全网快讯"):]
+        for label in ("财经快讯", "政策发布 · 官方信息源", "全球政经媒体", "其他"):
+            self.assertIn(label, card)
+        self.assertNotIn("热搜热点", card)     # 没有内容的板块不出现
+        self.assertIn("4 个板块", card)
+        self.assertIn("共 4 条", card)
+        # 编号全表连续，来源名不出现。
+        self.assertLess(card.index("金十快讯标题一"), card.index("国务院办公厅关于"))
+        self.assertLess(card.index("国务院办公厅关于"), card.index("Greenland"))
+        self.assertIn(">04</td>", card)
+        for name in ("金十数据", "国务院 最新政策", "Bloomberg 政治", "外部投稿"):
+            self.assertNotIn(name, card)
 
 
 class AnalyzeBriefTest(unittest.TestCase):
@@ -578,13 +821,17 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertIn("唯一原始标题", out)
         self.assertNotIn("覆盖 18 个数据源", out)
         self.assertNotIn('class="td-n td-bdr"', out)
-        # 18 源 × 3 条 = 54 行，编号连续且不带来源名。
-        self.assertEqual(out.count("唯一原始标题"), 54)
-        self.assertIn("共 54 条", out)
-        self.assertIn(">54</td>", out)
+        # 48 源 × 3 条 = 144 行，编号全表连续且不带来源名；按五大板块分组。
+        total = len(sources.SOURCES) * 3
+        self.assertEqual(out.count("唯一原始标题"), total)
+        self.assertIn(f"共 {total} 条", out)
+        self.assertIn(f">{total}</td>", out)
         card = out[out.index("全网快讯"):]
         for name in sources.SOURCES:
             self.assertNotIn(name, card)
+        for sec in sources.SECTIONS:
+            self.assertIn(sec["label"], card)
+        self.assertIn("5 个板块", card)
 
     def test_build_html_custom_max_chars_shrinks_items(self):
         # 自定义较小上限时仍保证生成内容不超出推送限制。
@@ -598,12 +845,13 @@ class BuildHtmlTest(unittest.TestCase):
         # 字符额度越紧，快讯列表逐级收敛：3 条 → 2 条 → 1 条 → 整段省略；分析栏目始终保留。
         brief = {name: [{"title": f"快讯条目 {si}-{i}：撑开字符额度的较长标题内容示例文本", "url": ""}
                         for i in range(20)] for si, name in enumerate(sources.SOURCES)}
+        n = len(sources.SOURCES)
         full = sources.build_html(brief, **self._kanpan())
-        self.assertEqual(full.count("快讯条目"), 18 * 3)
+        self.assertEqual(full.count("快讯条目"), n * 3)
         two = sources.build_html(brief, max_length=len(full) - 100, **self._kanpan())
-        self.assertEqual(two.count("快讯条目"), 18 * 2)
+        self.assertEqual(two.count("快讯条目"), n * 2)
         one = sources.build_html(brief, max_length=len(two) - 100, **self._kanpan())
-        self.assertEqual(one.count("快讯条目"), 18)
+        self.assertEqual(one.count("快讯条目"), n)
         none = sources.build_html(brief, max_length=len(one) - 100, **self._kanpan())
         self.assertNotIn("全网快讯", none)
         self.assertNotIn("快讯条目", none)

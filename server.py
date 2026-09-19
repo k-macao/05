@@ -11,6 +11,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs
 from urllib.request import Request, urlopen
 
 import sources
@@ -22,7 +23,7 @@ PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus
 PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "oai.1").strip()
 SOURCES = sources.SOURCES
 
-# /api/brief 的结果缓存（抓取 18 个源较慢，5 分钟内不重复抓取）。
+# /api/brief 的结果缓存（并发抓取五大板块 48 个源仍需数秒，5 分钟内不重复抓取）。
 _BRIEF_CACHE = {"at": 0.0, "data": None}
 _BRIEF_TTL = 300
 # /api/market 与推送闸门共用的大盘数据缓存（东方财富日 K + 新鲜度检查）。
@@ -75,9 +76,12 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        path, _, query = self.path.partition("?")
         if path == "/api/sources":
             return self.send_json(HTTPStatus.OK, SOURCES)
+        if path == "/api/sections":
+            # 板块目录：[{key, label, note, sources, count}]，五大板块与各自的数据源清单。
+            return self.send_json(HTTPStatus.OK, sources.section_catalog())
         if path == "/api/market":
             # 大盘数据新鲜度状态：推送闸门「不是最新就不推」同一套检查结果，供页面展示。
             try:
@@ -93,10 +97,17 @@ class Handler(SimpleHTTPRequestHandler):
                 "indices": review.get("indices"),
             })
         if path == "/api/brief":
+            # 可选 ?section=policy|world|civic|finance|trending：只返回该板块的源（走同一份缓存）。
+            section = (parse_qs(query).get("section") or [""])[0].strip()
+            if section and section not in sources.SECTION_KEYS:
+                return self.send_json(HTTPStatus.NOT_FOUND, {"message": f"板块不存在：{section}",
+                                                             "sections": sources.SECTION_KEYS})
             try:
                 brief = get_brief()
             except Exception as error:  # 抓取异常也返回可用结果
                 brief = {"error": str(error)}
+            if section and "error" not in brief:
+                brief = {name: brief.get(name, []) for name in sources.sources_in_section(section)}
             return self.send_json(HTTPStatus.OK, brief)
         return super().do_GET()
 
@@ -122,7 +133,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "freshness": freshness,
             })
 
-        # 真实抓取 18 个数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
+        # 真实抓取五大板块全部数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
         try:
             brief = get_brief()
         except Exception:
