@@ -49,7 +49,7 @@
 | ② | 接口数据不滞后（最新日 K ≥ 内置快照基线日期） | 日 K 倒退说明行情源异常 → 非最新 |
 | ③ | 复盘数据来自实时接口（`source ∈ {"eastmoney", "tencent"}`，非快照兜底）且复盘日 = 按「前天」口径最近一个可复盘交易日 | 快照兜底 / 复盘日落后 → 非最新 |
 
-检查结果 `freshness` 包含 `ok / reason / market_date / source / latest_kline_date / expected_date / checked_at`，`reason` 为可直接进日志的中文结论。**非最新时的行为**：`push_brief.py` 打印原因并以退出码 3 结束（GitHub Actions 显示为失败，便于发现）；本地服务返回 409 与原因。页面「AI 看盘」标题右侧的「大盘数据」标签（`GET /api/market`）实时展示同一检查结果。
+检查结果 `freshness` 包含 `ok / reason / market_date / source / latest_kline_date / expected_date / checked_at`，`reason` 为可直接进日志的中文结论。**非最新时的行为**：`push_brief.py` 打印原因并以退出码 3 结束（GitHub Actions 显示为失败，便于发现）；本地服务返回 409 与原因。页面「AI 看盘」标题右侧的「大盘数据」标签（`GET /api/market`）实时展示同一检查结果。新鲜度通过之后还会过敏感词检测（`sensitive.py`，见 `docs/sensitive_filter.md`）：残留违规内容则 `push_brief.py` 退出码 4、本地服务返回 422。
 
 测试/应急开关：`SKIP_MARKET_CHECK=1` 跳过检查直接推送；`MARKET_FRESHNESS_FORCE=fresh|stale` 强制检查结果。
 

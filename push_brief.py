@@ -8,13 +8,21 @@
     PUSHPLUS_TOPIC=...       覆盖群组编码（默认 oai.1，一对多群组推送）
     MARKET_FRESHNESS_FORCE=fresh|stale  强制大盘数据检查结果（测试/应急用）
     SKIP_MARKET_CHECK=1      跳过大盘数据新鲜度检查（测试/应急用，不建议日常开启）
+    SKIP_SENSITIVE_CHECK=1   跳过敏感词检测（测试/应急用，不建议日常开启）
+    SENSITIVE_FORCE=pass|block
+                             强制敏感词闸门结果（测试用）
+    SENSITIVE_LEXICON=/path/to.txt
+                             外掛敏感词（一行一词；``block:词`` 为高严重度）
 
 推送前会先做「大盘数据新鲜度检查」：简报里的 A 股复盘数据必须来自实时行情接口
 （东方财富主源，失联时自动切换腾讯证券备用源）、且复盘日等于最近一个可复盘交易日；
 不是最新（主备行情接口均不可用 / 回退内置快照 /
 接口数据滞后）就放弃本次推送，退出码 3（GitHub Actions 显示为失败，便于发现）。
 
-退出码：0 成功，1 未配置 token，2 推送失败，3 大盘数据非最新（已跳过推送）。
+推送前还会过敏感词检测（``sensitive.py``，对齐《网络信息内容生态治理规定》）：先按条剔除违规快讯，
+再扫描标题 + HTML；残留命中则放弃本次推送，退出码 4。正常财经 / 地缘新闻（战争、制裁、Iran 等）不会误伤。
+
+退出码：0 成功，1 未配置 token，2 推送失败，3 大盘数据非最新（已跳过推送），4 内容未通过敏感词检测（已跳过推送）。
 """
 import json
 import os
@@ -22,6 +30,7 @@ from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import sensitive
 import sources
 
 API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
@@ -49,12 +58,18 @@ PUSHPLUS_ERROR_HINTS = {
 }
 
 
-def build_content(now, review=None):
-    """真实抓取五大板块全部数据源并渲染 HTML 简报（网络不可用时自动回退内置演示数据）。"""
+def collect_brief():
+    """真实抓取五大板块全部数据源（网络不可用时自动回退内置演示数据）。"""
     try:
-        brief = sources.collect_all()
+        return sources.collect_all()
     except Exception:
-        brief = {}
+        return {}
+
+
+def build_content(now, review=None, brief=None):
+    """渲染 HTML 简报。``brief`` 缺省时现场抓取；推送路径先过敏感词过滤再传入。"""
+    if brief is None:
+        brief = collect_brief()
     return sources.build_html(brief, now=now, review=review)
 
 
@@ -111,14 +126,36 @@ def main():
     else:
         print(f"大盘数据检查通过：{freshness.get('reason')}", flush=True)
 
+    if not sensitive.skip_enabled() and os.environ.get("SENSITIVE_FORCE", "").strip().lower() == "block":
+        gate = sensitive.check_push("", "")
+        print(f"敏感词检测：{gate['reason']}", flush=True)
+        print("跳过推送：内容未通过敏感词检测，本次不推。", flush=True)
+        print(f"诊断：{json.dumps(gate, ensure_ascii=False)}", flush=True)
+        return 4
+
+    brief = collect_brief()
+    if sensitive.skip_enabled():
+        print("警告：SKIP_SENSITIVE_CHECK 已启用，跳过敏感词检测（仅限测试/应急）", flush=True)
+    else:
+        brief, filtered = sensitive.filter_brief(brief)
+        if filtered["dropped_count"]:
+            print(f"敏感词检测：{filtered['reason']}", flush=True)
+
     payload = {
         "token": token,
         "title": "章鱼 AI·全景分析（市场因子分析）",
-        "content": build_content(datetime.now(), review=sources.analyze_ashare(market)),
+        "content": build_content(datetime.now(), review=sources.analyze_ashare(market), brief=brief),
         "template": "html",
     }
     if TOPIC:
         payload["topic"] = TOPIC
+
+    gate = sensitive.check_push(payload["title"], payload["content"])
+    print(f"敏感词检测：{gate['reason']}", flush=True)
+    if not gate["ok"]:
+        print("跳过推送：内容未通过敏感词检测，本次不推。", flush=True)
+        print(f"诊断：{json.dumps(gate, ensure_ascii=False)}", flush=True)
+        return 4
 
     try:
         request = Request(

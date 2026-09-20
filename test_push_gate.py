@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""push_brief.py 推送闸门测试：大盘数据不是最新就不推（退出码 3）。
+"""push_brief.py 推送闸门测试：大盘数据不是最新就不推（退出码 3）；
+敏感词残留则退出码 4。
 
 零第三方依赖，直接运行：
     python3 test_push_gate.py
 
 思路：本地假 PushPlus（mock_pushplus.py）接收推送并写“假文件”，
-把 sources 的大盘采集与 18 个新闻源全部替换为本地注入，验证：
+把 sources 的大盘采集与新闻源全部替换为本地注入，验证：
 - 大盘数据非最新 → 退出码 3，且假 PushPlus 收不到任何请求（真的没推）；
 - 大盘数据最新   → 退出码 0，假文件生成且载荷正确；
-- SKIP_MARKET_CHECK=1 → 跳过闸门照常推送（测试/应急通道）。
+- SKIP_MARKET_CHECK=1 → 跳过闸门照常推送（测试/应急通道）；
+- 违规快讯被 filter_brief 剔除后仍可推送；HTML 残留敏感词 → 退出码 4；
+- SKIP_SENSITIVE_CHECK / SENSITIVE_FORCE 与新鲜度闸门同一套环境变量风格。
 """
 import json
 import os
@@ -45,6 +48,7 @@ class MarketGateTest(unittest.TestCase):
     def setUp(self):
         self._orig_collect_all = sources.collect_all
         self._orig_collect_market = sources.collect_market_for_push
+        self._orig_build_html = sources.build_html
         self._orig_api_url = push_brief.API_URL
         sources.collect_all = _demo_brief
         self._tmp = tempfile.TemporaryDirectory()
@@ -52,14 +56,19 @@ class MarketGateTest(unittest.TestCase):
         os.environ["PUSHPLUS_TOKEN"] = "fake-token-gate"
         os.environ.pop("SKIP_MARKET_CHECK", None)
         os.environ.pop("MARKET_FRESHNESS_FORCE", None)
+        os.environ.pop("SKIP_SENSITIVE_CHECK", None)
+        os.environ.pop("SENSITIVE_FORCE", None)
+        os.environ.pop("SENSITIVE_LEXICON", None)
 
     def tearDown(self):
         sources.collect_all = self._orig_collect_all
         sources.collect_market_for_push = self._orig_collect_market
+        sources.build_html = self._orig_build_html
         push_brief.API_URL = self._orig_api_url
         self._tmp.cleanup()
         for key in ("PUSHPLUS_TOKEN", "PUSHPLUS_API_URL", "SKIP_MARKET_CHECK",
-                    "MARKET_FRESHNESS_FORCE"):
+                    "MARKET_FRESHNESS_FORCE", "SKIP_SENSITIVE_CHECK",
+                    "SENSITIVE_FORCE", "SENSITIVE_LEXICON"):
             os.environ.pop(key, None)
 
     def _push_once(self, fresh: bool) -> int:
@@ -98,6 +107,55 @@ class MarketGateTest(unittest.TestCase):
         # SKIP_MARKET_CHECK=1（测试/应急）→ 即便非最新也照常推送。
         os.environ["SKIP_MARKET_CHECK"] = "1"
         rc = self._push_once(fresh=False)
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.exists(self.record_file))
+
+    def test_sensitive_item_dropped_then_push(self):
+        # 单条违规快讯被剔除后，其余干净内容照常推送，正文不再出现该标题。
+        def brief_with_hit():
+            data = _demo_brief()
+            data["金十数据"] = (
+                [{"title": "推荐网络赌场开户送彩金", "url": "https://bad.example"}]
+                + data["金十数据"]
+            )
+            return data
+        sources.collect_all = brief_with_hit
+        rc = self._push_once(fresh=True)
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.exists(self.record_file))
+        with open(self.record_file, encoding="utf-8") as f:
+            payload = json.load(f)["payload"]
+        self.assertNotIn("网络赌场", payload["content"])
+        self.assertNotIn("开户送彩金", payload["content"])
+
+    def test_sensitive_remaining_blocks_push(self):
+        # 渲染后的 HTML 仍残留敏感词 → 退出码 4，不发出推送。
+        orig = sources.build_html
+
+        def poisoned(*args, **kwargs):
+            return orig(*args, **kwargs) + "<p>颠覆国家政权</p>"
+
+        sources.build_html = poisoned
+        rc = self._push_once(fresh=True)
+        self.assertEqual(rc, 4)
+        self.assertFalse(os.path.exists(self.record_file),
+                         "敏感词残留时不应发出推送")
+
+    def test_sensitive_force_block(self):
+        os.environ["SENSITIVE_FORCE"] = "block"
+        rc = self._push_once(fresh=True)
+        self.assertEqual(rc, 4)
+        self.assertFalse(os.path.exists(self.record_file))
+
+    def test_skip_sensitive_check_bypasses_gate(self):
+        os.environ["SKIP_SENSITIVE_CHECK"] = "1"
+        orig = sources.build_html
+
+        def poisoned(*args, **kwargs):
+            return orig(*args, **kwargs) + "<p>网络赌场</p>"
+
+        sources.build_html = poisoned
+        rc = self._push_once(fresh=True)
         self.assertEqual(rc, 0)
         self.assertTrue(os.path.exists(self.record_file))
 
