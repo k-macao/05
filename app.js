@@ -30,12 +30,12 @@ runBtn.onclick=async()=>{
       const data=await res.json();
       showToast((data&&data.message)||'简报已生成，将推送至 PushPlus');
     }else{
-      // 优先展示服务端返回的真实原因（如 503 未配置 token、409 大盘数据非最新已拦截），
-      // 静态托管等场景下 405 给出明确指引。
+      // 优先展示服务端返回的真实原因（如 503 未配置 token、409 大盘数据非最新已拦截、
+      // 422 敏感词检测未通过），静态托管等场景下 405 给出明确指引。
       let message=null;
       try{const data=await res.json();if(data&&data.message)message=data.message;}catch(e){/* 非 JSON 错误体 */ }
       if(res.status===405) message='当前页面由静态托管提供，不支持 POST /api/run，请改用 server.py 启动服务';
-      showToast(message||`后端返回 ${res.status}，请检查服务`,res.status===409?6000:2600);
+      showToast(message||`后端返回 ${res.status}，请检查服务`,(res.status===409||res.status===422)?6000:2600);
     }
   }catch(e){
     showToast('无法连接推送服务，请确认后端正在运行');

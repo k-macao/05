@@ -58,6 +58,8 @@ PUSHPLUS_TOKEN=xxx python3 push_brief.py
 
 **推送前大盘数据新鲜度检查（不是最新就不推）**：推送前会先确认简报里的「AI 看盘」A 股数据为最新——①行情接口可用（东方财富主源与腾讯证券备用源至少一个可用）；②接口数据不滞后（最新日 K 不早于内置快照基线）；③复盘数据来自实时接口（东方财富或腾讯证券备用源，非内置快照兜底）且复盘日等于最近一个可复盘交易日。任何一条不满足即放弃本次推送：`push_brief.py` 退出码 3（GitHub Actions 显示为失败，便于发现行情源异常），本地服务 `POST /api/run` 返回 409 并透出具体原因。页面「AI 看盘」标题右侧的标签实时展示该检查结果（`GET /api/market`）。
 
+**推送前敏感词检测（违规内容不推）**：对齐《网络安全法》《互联网信息服务管理办法》《网络信息内容生态治理规定》第六条。`sensitive.py` 先按条剔除违规快讯再生成 HTML，再扫描标题 + 正文；残留命中则放弃本次推送：`push_brief.py` 退出码 4，本地服务 `POST /api/run` 返回 422。词库只覆盖法规列明的违法 / 不良信息类别，**不**编造政治人物名单，也**不**把战争、制裁、Iran、立案、骗局、Ponzi、Terrorism Risk Insurance、Drug Transit、博彩股、六合彩等正常财经 / 地缘 / 监管新闻当违规。执法、驳斥口径（打击 / 查处 / 反对 / charges）视为报道放行。排障接口 `GET /api/sensitive`。详见 `docs/sensitive_filter.md`。
+
 相关环境变量（推送容量 / 测试 / 应急）：
 
 - `PUSHPLUS_MEMBER=0`：**推送容量口径**。默认即按 PushPlus 会员的 **10 万字** 上限生成（留 2,000 字符安全余量 → 98,000 字符，每个数据源最多 20 条）；普通/实名账号（2 万字上限）显式设为 `0` 即退回精选口径（19,500 字符 · 每源 3 条）。
@@ -67,5 +69,8 @@ PUSHPLUS_TOKEN=xxx python3 push_brief.py
 - `BRIEF_FETCH_WORKERS=8`：并发抓取线程数（48 个源互不依赖，默认 8 线程；设 `1` 退回串行）。
 - `SKIP_MARKET_CHECK=1`：跳过新鲜度检查，直接推送。
 - `MARKET_FRESHNESS_FORCE=fresh|stale`：强制检查结果，用于联调测试。
+- `SKIP_SENSITIVE_CHECK=1`：跳过敏感词检测（测试 / 应急，不建议日常开启）。
+- `SENSITIVE_FORCE=pass|block`：强制敏感词闸门结果，用于联调测试。
+- `SENSITIVE_LEXICON=/path/to.txt`：外掛敏感词（一行一词；`block:词` 为高严重度）。
 
 数据仅供参考，不构成投资建议。

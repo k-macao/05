@@ -39,8 +39,20 @@ PUSHPLUS_TOKEN=fake-token-abc PUSHPLUS_API_URL="http://127.0.0.1:$MOCK_PORT/send
 echo "退出码: $?（期望 0）"
 
 echo ""
-echo "=== 5. 未配 token 的分支（期望退出码 1）==="
-env -u PUSHPLUS_TOKEN -u PUSHPLUS_API_URL -u SKIP_MARKET_CHECK -u MARKET_FRESHNESS_FORCE $PY push_brief.py
+echo "=== 5. SENSITIVE_FORCE=block → 退出码 4 且不推送 ==="
+rm -f pushplus_record.json
+PUSHPLUS_TOKEN=fake-token-abc PUSHPLUS_API_URL="http://127.0.0.1:$MOCK_PORT/send" MARKET_FRESHNESS_FORCE=fresh SENSITIVE_FORCE=block $PY push_brief.py
+RC=$?
+echo "退出码: $RC（期望 4）"
+if [ -f pushplus_record.json ]; then
+  echo "❌ 敏感词检测未通过时不应生成假文件（不应推送）"
+else
+  echo "✅ 未生成假文件（已拦截推送）"
+fi
+
+echo ""
+echo "=== 6. 未配 token 的分支（期望退出码 1）==="
+env -u PUSHPLUS_TOKEN -u PUSHPLUS_API_URL -u SKIP_MARKET_CHECK -u MARKET_FRESHNESS_FORCE -u SKIP_SENSITIVE_CHECK -u SENSITIVE_FORCE $PY push_brief.py
 echo "退出码: $?"
 
 kill $MOCK_PID 2>/dev/null

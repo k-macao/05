@@ -3,6 +3,10 @@
 
 启动：PUSHPLUS_TOKEN=... python3 server.py
 可选：PORT=4173
+
+POST /api/run 推送前闸门与 ``push_brief.py`` 相同：
+大盘数据非最新 → 409；敏感词检测未通过 → 422。
+诊断：GET /api/market、GET /api/sensitive。
 """
 import json
 import os
@@ -14,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs
 from urllib.request import Request, urlopen
 
+import sensitive
 import sources
 
 ROOT = Path(__file__).resolve().parent
@@ -82,6 +87,20 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/sections":
             # 板块目录：[{key, label, note, sources, count}]，五大板块与各自的数据源清单。
             return self.send_json(HTTPStatus.OK, sources.section_catalog())
+        if path == "/api/sensitive":
+            # 敏感词检测诊断：与推送闸门同一套词库，只扫不改，供排障。
+            if sensitive.skip_enabled():
+                return self.send_json(HTTPStatus.OK, {
+                    "ok": True, "skipped": True,
+                    "reason": "SKIP_SENSITIVE_CHECK 已启用，跳过敏感词检测（仅限测试/应急）",
+                    "dropped_count": 0, "dropped": [], "categories": [],
+                    "lexicon_size": 0,
+                })
+            try:
+                brief = get_brief()
+            except Exception as error:
+                return self.send_json(HTTPStatus.OK, {"error": str(error)})
+            return self.send_json(HTTPStatus.OK, sensitive.inspect_brief(brief))
         if path == "/api/market":
             # 大盘数据新鲜度状态：推送闸门「不是最新就不推」同一套检查结果，供页面展示。
             try:
@@ -143,11 +162,25 @@ class Handler(SimpleHTTPRequestHandler):
                 "freshness": freshness,
             })
 
+        # ── 推送前检查：敏感词检测（与 push_brief.py 同一套闸门，对齐国家互联网信息规定）──
+        if not sensitive.skip_enabled() and os.environ.get("SENSITIVE_FORCE", "").strip().lower() == "block":
+            gate = sensitive.check_push("", "")
+            return self.send_json(HTTPStatus.UNPROCESSABLE_ENTITY, {
+                "message": f"已取消推送：内容未通过敏感词检测——{gate.get('reason')}",
+                "sensitive": gate,
+            })
+
         # 真实抓取五大板块全部数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
         try:
             brief = get_brief()
         except Exception:
             brief = sources.collect_all()
+        if sensitive.skip_enabled():
+            print("警告：SKIP_SENSITIVE_CHECK 已启用，跳过敏感词检测（仅限测试/应急）", flush=True)
+        else:
+            brief, filtered = sensitive.filter_brief(brief)
+            if filtered["dropped_count"]:
+                print(f"敏感词检测：{filtered['reason']}", flush=True)
         content = sources.build_html(brief, review=sources.analyze_ashare(market_payload["market"]))
 
         payload = {
@@ -156,6 +189,13 @@ class Handler(SimpleHTTPRequestHandler):
             "content": content,
             "template": "html",
         }
+        gate = sensitive.check_push(payload["title"], payload["content"])
+        print(f"敏感词检测：{gate['reason']}", flush=True)
+        if not gate["ok"]:
+            return self.send_json(HTTPStatus.UNPROCESSABLE_ENTITY, {
+                "message": f"已取消推送：内容未通过敏感词检测——{gate.get('reason')}",
+                "sensitive": gate,
+            })
         if PUSHPLUS_TOPIC:
             payload["topic"] = PUSHPLUS_TOPIC
         try:

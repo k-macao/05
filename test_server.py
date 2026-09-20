@@ -37,6 +37,9 @@ def start_server(port, extra_env=None):
     env.pop("PUSHPLUS_TOKEN", None)
     env.pop("PUSHPLUS_API_URL", None)
     env.pop("PUSHPLUS_TOPIC", None)
+    env.pop("SKIP_SENSITIVE_CHECK", None)
+    env.pop("SENSITIVE_FORCE", None)
+    env.pop("SENSITIVE_LEXICON", None)
     env["PORT"] = str(port)
     if extra_env:
         env.update(extra_env)
@@ -184,6 +187,15 @@ class ServerSmokeTest(unittest.TestCase):
         status, _ = request(self.base, "GET", "/api/run")
         self.assertEqual(status, 404)
 
+    def test_sensitive_endpoint_reports_status(self):
+        status, raw = request(self.base, "GET", "/api/sensitive")
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        self.assertIn("ok", data)
+        self.assertIn("dropped_count", data)
+        self.assertIn("lexicon_size", data)
+        self.assertGreater(data["lexicon_size"], 0)
+
 
 class MockedPushTest(unittest.TestCase):
     """手动推送联调：配 token 的 server.py + 本地假 PushPlus。
@@ -283,6 +295,34 @@ class MockedPushTest(unittest.TestCase):
                     self.assertIn(key, freshness)
                 self.assertFalse(os.path.exists(record_file),
                                  "大盘数据非最新时不应发出推送")
+            finally:
+                srv.terminate(); srv.wait(timeout=5)
+                mock.terminate(); mock.wait(timeout=5)
+
+    def test_push_blocked_when_sensitive(self):
+        # 推送前闸门：敏感词检测未通过 → 422 取消推送，假 PushPlus 收不到任何请求。
+        mock_port, srv_port = free_port(), free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            record_file = os.path.join(tmp, "pushplus_record.json")
+            mock = start_mock(mock_port, record_file)
+            srv = start_server(srv_port, {
+                "PUSHPLUS_TOKEN": "fake-token-123",
+                "PUSHPLUS_API_URL": f"http://127.0.0.1:{mock_port}/send",
+                "MARKET_FRESHNESS_FORCE": "fresh",
+                "SENSITIVE_FORCE": "block",
+            })
+            try:
+                status, raw = request(
+                    f"http://127.0.0.1:{srv_port}", "POST", "/api/run", body={},
+                    headers={"Content-Type": "application/json"},
+                )
+                self.assertEqual(status, 422)
+                body = json.loads(raw)
+                self.assertIn("敏感词", body["message"])
+                self.assertIn("sensitive", body)
+                self.assertFalse(body["sensitive"]["ok"])
+                self.assertFalse(os.path.exists(record_file),
+                                 "敏感词检测未通过时不应发出推送")
             finally:
                 srv.terminate(); srv.wait(timeout=5)
                 mock.terminate(); mock.wait(timeout=5)
