@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | `finance` | 财经快讯 | 12 | rebang.vip 聚合通道（`channel` + `origin`） | — |
 | `trending` | 热搜热点 | 6 | 自定义收集器（`collector`） | ourongxing/newsnow |
-| `policy` | 政策发布 · 官方信息源 | 14 | 境内列表页 + 链接正则（`page` + `pattern`）；境外官方 RSS / Atom（`feed`） | changwu/china-policy-sites · angelinajh/regtech-policy-tracker |
+| `policy` | 政策发布 · 官方信息源 | 15 | 境内列表页 + 链接正则（`page` + `pattern`）+ 中国新闻社时政 RSS；境外官方 RSS / Atom（`feed`） | changwu/china-policy-sites · angelinajh/regtech-policy-tracker |
 | `world` | 全球政经媒体 | 12 | 官方 RSS（`feed`） | edoardottt/news-list |
 | `civic` | 公民科技 · 政治透明度 | 4 | 开放 JSON API（`collector`）/ RSS（`feed`） | g0v · keepittechie/equitystack · GovTrack |
 
@@ -27,7 +27,7 @@
 3. **简报**：正文最后的「全网快讯」按板块分组，每组一行小标题 + 条数，编号全表连续，仍不标注具体来源；
    `analyze_brief()` 额外返回 `sections`（各板块条数 / 有内容的源数）。
 
-## 二、政策发布 · 官方信息源（14 源）
+## 二、政策发布 · 官方信息源（15 源）
 
 ### 境内（changwu/china-policy-sites 站点清单）
 
@@ -44,6 +44,7 @@
 | 商务部 政策发布 | `https://www.mofcom.gov.cn/zwgk/zcfb/index.html` | `mofcom.gov.cn/zwgk/zcfb/art/\d{4}/art_\w+.html` |
 | 证监会 新闻发布 | `https://www.csrc.gov.cn/csrc/xwfb/index.shtml` | `csrc.gov.cn/csrc/c(100028\|106311\|100039)/c\w+/content.shtml`（要闻 / 头条 / 政策解读；旧栏目 `c100028/common_list.shtml` 已停更） |
 | 香港特区政府 新闻公报 | `https://www.info.gov.hk/gia/rss/general_zh.xml` | 官方 RSS（繁体） |
+| 中国新闻社 时政 | `https://www.chinanews.com.cn/rss/china.xml` | 官方 RSS（时政新闻；中央 / 部委发文与人事任免的官媒口径，计入「官媒 / 官方口径」舆情） |
 
 > 注意：`https://www.gov.cn/zhengce/zuixin.htm`、`/lianbo/bumen/` 会 302 回首页，必须用上面带斜杠的目录地址。
 > 央行（pbc.gov.cn）有 JS 反爬壳，标准库直连拿不到列表，这里不接；央行发文会经「国务院 政务联播」转载进入简报。
@@ -107,7 +108,7 @@ collect_one(name)
 
 - 每个新源都有 `_DEMO` 兜底（取自 2026-09-19 的真实条目），保证离线 / CI 沙箱也能出完整简报。
 - `_fetch()` 按「响应头 charset → `<meta charset>` / XML encoding → UTF-8」解码，GB2312/GBK 统一用 gb18030。
-- 单源超时 8 秒；48 源并发抓取典型耗时数秒，最坏约 1 分钟（GitHub Actions 与本地服务都可承受）。
+- 单源超时 8 秒；49 源并发抓取典型耗时数秒，最坏约 1 分钟（GitHub Actions 与本地服务都可承受）。
 
 ## 六、对分析栏目的影响
 
@@ -120,7 +121,7 @@ collect_one(name)
 - 政策维度 `_POLICY_BUCKETS` 与鹰鸽词库 `_HAWKISH / _DOVISH`：补 `Federal Reserve / interest rate* / treasury / tax / SEC / regulation* /
   executive order* / NATO / Congress …` 与 `restrictive / crackdown / ban / probe*` vs `relief / bailout / tax cut* / exempt* / 促进 / 优惠`。
 
-演示数据实测：政策面 39 源命中 · 114 条提及，取向偏鹰（地缘与贸易政策、财政最热）；
+演示数据实测：政策面 40 源命中 · 115 条提及，取向偏鹰（地缘与贸易政策、资本市场监管最热）；
 中文用例（`PolicySectionTest`）全部保持原判定。
 
 ## 七、如何再加一个源
