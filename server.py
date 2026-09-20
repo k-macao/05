@@ -96,6 +96,16 @@ class Handler(SimpleHTTPRequestHandler):
                 "bias": review.get("bias"),
                 "indices": review.get("indices"),
             })
+        if path == "/api/policy":
+            # 「AI 政策分析」深度层：政策维度统计 + 知识库检索 + 修饰词口径 + 舆情情感 +
+            # 传导图谱 + 四步推理链 + 思维导图 + 政策影响研报 + LSTM / Prophet 式模型结果。
+            # 走 /api/brief 同一份缓存；?deep=0 只要基础统计（更快）。
+            deep = (parse_qs(query).get("deep") or ["1"])[0].strip().lower() not in ("0", "false", "no")
+            try:
+                brief = get_brief()
+            except Exception as error:
+                return self.send_json(HTTPStatus.OK, {"error": str(error)})
+            return self.send_json(HTTPStatus.OK, sources.analyze_policy(brief, deep=deep))
         if path == "/api/brief":
             # 可选 ?section=policy|world|civic|finance|trending：只返回该板块的源（走同一份缓存）。
             section = (parse_qs(query).get("section") or [""])[0].strip()

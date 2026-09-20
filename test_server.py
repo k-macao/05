@@ -141,6 +141,25 @@ class ServerSmokeTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn("civic", json.loads(raw)["sections"])
 
+    def test_policy_endpoint_returns_deep_analysis(self):
+        # GET /api/policy：「AI 政策分析」深度层（知识库检索 / 推理链 / 模型）随接口一并返回。
+        status, raw = request(self.base, "GET", "/api/policy")
+        self.assertEqual(status, 200)
+        data = json.loads(raw)
+        for key in ("buckets", "stance", "headline", "kb", "modifiers", "sentiment",
+                    "graph", "reasoning", "mindmap", "research", "models"):
+            self.assertIn(key, data)
+        self.assertEqual([step["label"] for step in data["reasoning"]["steps"]],
+                         ["宏观背景", "行业限制", "资金流向", "受益板块"])
+        self.assertIn("lstm", data["models"])
+        self.assertIn("prophet", data["models"])
+        # ?deep=0 只要基础统计（不跑知识库检索与模型），响应更快。
+        status, raw = request(self.base, "GET", "/api/policy?deep=0")
+        shallow = json.loads(raw)
+        self.assertEqual(status, 200)
+        self.assertIn("headline", shallow)
+        self.assertNotIn("kb", shallow)
+
     def test_run_without_token_is_503_not_405(self):
         status, raw = request(
             self.base, "POST", "/api/run", body={},
@@ -207,6 +226,11 @@ class MockedPushTest(unittest.TestCase):
                 self.assertIn("数据源", payload["content"])
                 self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送
                 self.assertIn("AI 政策分析", payload["content"])  # 政策面板块（鹰鸽取向）同样随简报推送
+                # 政策分析紧跟「AI 每日总结」，其后是深度层与研报两张卡片。
+                for card in ("AI 政策深度", "AI 政策研报"):
+                    self.assertIn(card, payload["content"])
+                self.assertLess(payload["content"].index("AI 政策分析"),
+                                payload["content"].index("AI 板块机会"))
             finally:
                 srv.terminate(); srv.wait(timeout=5)
                 mock.terminate(); mock.wait(timeout=5)
