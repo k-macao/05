@@ -4,7 +4,9 @@
 零第三方依赖，直接运行：
     python3 test_sources.py
 """
+import math
 import os
+import random
 import unittest
 from datetime import date
 
@@ -615,9 +617,16 @@ class PolicySectionTest(unittest.TestCase):
         self.assertIn("政策净空", out)
         self.assertIn("偏鹰", out)
         self.assertIn("条政策提及", out)
-        # 位置：紧跟「AI 板块机会」，在「AI 看盘」之前。
-        self.assertLess(out.index("AI 板块机会"), out.index("AI 政策分析"))
-        self.assertLess(out.index("AI 政策分析"), out.index("AI 看盘"))
+        # 位置：紧跟「AI 每日总结」，其后依次是「AI 政策深度」「AI 政策研报」，再到「AI 板块机会」「AI 看盘」。
+        # 用卡片标题标签定位（正文里也会互相引用板块名，裸文本匹配不可靠）。
+        def at(label: str) -> int:
+            return out.index(f'<span class="tag">{label}</span>')
+
+        self.assertLess(at("AI 每日总结"), at("AI 政策分析"))
+        self.assertLess(at("AI 政策分析"), at("AI 政策深度"))
+        self.assertLess(at("AI 政策深度"), at("AI 政策研报"))
+        self.assertLess(at("AI 政策研报"), at("AI 板块机会"))
+        self.assertLess(out.index("AI 板块机会"), out.index("AI 看盘"))
 
     def test_build_html_policy_card_honest_when_no_signals(self):
         out = sources.build_html({"金十数据": [{"title": "今天天气不错", "url": ""}]}, **self._kanpan())
@@ -631,7 +640,475 @@ class PolicySectionTest(unittest.TestCase):
         self.assertNotIn("<script>alert", out)
 
 
+class PolicyKnowledgeBaseTest(unittest.TestCase):
+    """①政策法规知识库（RAG）：检索历史政策 → 与新信号对比分析。"""
+
+    def test_kb_covers_every_policy_dimension(self):
+        # 知识库必须覆盖全部 8 个政策维度，否则某个维度当天命中时检索不到背景知识。
+        dimensions = {entry["dimension"] for entry in sources._POLICY_KB}
+        for tag, _keywords in sources._POLICY_BUCKETS:
+            self.assertIn(tag, dimensions, f"知识库缺少维度：{tag}")
+
+    def test_kb_entries_have_required_fields(self):
+        required = {"id", "date", "issuer", "doctype", "title", "dimension", "phrase",
+                    "keywords", "summary", "market_effect", "industries"}
+        for entry in sources._POLICY_KB:
+            self.assertTrue(required <= set(entry), f"{entry.get('id')} 缺字段：{required - set(entry)}")
+        ids = [entry["id"] for entry in sources._POLICY_KB]
+        self.assertEqual(len(ids), len(set(ids)), "知识库条目 id 必须唯一")
+
+    def test_retrieval_matches_keywords_and_dimension(self):
+        hits = sources.retrieve_policy_context("央行降准并开展买断式逆回购，保持流动性充裕",
+                                               tags=["央行 · 流动性"], top_k=3)
+        self.assertTrue(hits)
+        top = hits[0]
+        self.assertEqual(top["dimension"], "央行 · 流动性")
+        self.assertIn("降准", top["matched"])
+        self.assertGreaterEqual(top["score"], sources._POLICY_KB_WEIGHTS["keyword"]
+                                + sources._POLICY_KB_WEIGHTS["dimension"])
+        self.assertIn("命中", top["why"])
+
+    def test_retrieval_ranks_by_score_then_recency(self):
+        hits = sources.retrieve_policy_context("出口管制 实体清单 制裁 半导体设备",
+                                               tags=["地缘与贸易政策"], top_k=5)
+        scores = [hit["score"] for hit in hits]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertIn("BIS-CHIPRULE-202412", [hit["id"] for hit in hits])
+
+    def test_retrieval_respects_top_k_and_returns_nothing_without_signal(self):
+        self.assertLessEqual(len(sources.retrieve_policy_context("央行降准", tags=["央行 · 流动性"], top_k=2)), 2)
+        self.assertEqual(sources.retrieve_policy_context("今天天气不错"), [])
+
+    def test_policy_knowledge_attaches_comparison(self):
+        policy = sources.analyze_policy({"金十数据": [{"title": "美联储鹰派转向，暗示继续加息缩表", "url": ""}]},
+                                        deep=False)
+        kb = sources.policy_knowledge(policy)
+        self.assertTrue(kb["hits"])
+        self.assertEqual(len(kb["comparison"]), len(kb["hits"]))
+        self.assertIn("历史对照", kb["comparison"][0])
+        self.assertIn(kb["hits"][0]["phrase"], kb["comparison"][0])
+
+    def test_policy_knowledge_is_honest_without_signals(self):
+        kb = sources.policy_knowledge(sources.analyze_policy({"金十数据": [{"title": "今天天气不错", "url": ""}]},
+                                                             deep=False))
+        self.assertEqual(kb["hits"], [])
+        self.assertIn("未启动", kb["note"])
+
+
+class PolicyModifierTest(unittest.TestCase):
+    """③金融术语口径：政策修饰词的经济学 + 法学解读。"""
+
+    def test_easing_and_tightening_modifiers(self):
+        loose = sources.interpret_policy_modifiers("稳健的货币政策转为适度宽松，保持流动性充裕")
+        tight = sources.interpret_policy_modifiers("监管从严，严禁违规减持，依法依规查处")
+        self.assertEqual(loose["bias"], "偏松")
+        self.assertEqual(tight["bias"], "偏紧")
+        self.assertGreater(loose["score"], 0)
+        self.assertLess(tight["score"], 0)
+
+    def test_modifier_carries_market_and_legal_meaning(self):
+        hits = sources.interpret_policy_modifiers("证监会从严监管，严禁财务造假")["hits"]
+        words = {hit["word"] for hit in hits}
+        self.assertIn("从严", words)
+        self.assertIn("严禁", words)
+        ban = next(hit for hit in hits if hit["word"] == "严禁")
+        self.assertLess(ban["strength"], 0)
+        self.assertTrue(ban["legal"])       # 禁止性规范必须给出法学含义
+        self.assertTrue(ban["market"])      # 同时给出市场含义
+        # 解读句要落到具体的市场含义，而不是只给一个标签。
+        self.assertIn("降准降息预期升温", sources.interpret_policy_modifiers("适度宽松")["reading"])
+
+    def test_longest_match_wins(self):
+        # 「适度宽松」命中后不再重复计入被它包含的短词，避免同一表述被双重计权。
+        hits = sources.interpret_policy_modifiers("实施适度宽松的货币政策")["hits"]
+        words = [hit["word"] for hit in hits]
+        self.assertIn("适度宽松", words)
+        self.assertNotIn("适度", words)
+
+    def test_no_modifier_is_honest(self):
+        out = sources.interpret_policy_modifiers("现货黄金上涨超过7%")
+        self.assertEqual(out["hits"], [])
+        self.assertEqual(out["bias"], "中性")
+        self.assertIn("未命中政策修饰词", out["reading"])
+
+
+class PolicySentimentTest(unittest.TestCase):
+    """④政策舆情情感打分：正向 / 中性 / 负向 + 官媒与市场的预期差。"""
+
+    @staticmethod
+    def _brief(items):
+        return {name: [{"title": title, "url": ""} for title in titles] for name, titles in items.items()}
+
+    def test_positive_negative_neutral_counts(self):
+        out = sources.analyze_policy_sentiment(self._brief({
+            "金十数据": [
+                "央行降准降息支持实体经济，流动性宽松利好股市",     # 正向
+                "监管从严查处违规减持，立案调查警示风险",           # 负向
+                "央行公告开展逆回购操作",                          # 中性（无极性词）
+            ],
+        }))
+        overall = out["overall"]
+        self.assertEqual((overall["positive"], overall["negative"], overall["neutral"]), (1, 1, 1))
+        self.assertEqual(overall["total"], 3)
+        self.assertEqual(overall["ratio"], "正向 1 : 中性 1 : 负向 1")
+        labels = {item["title"]: item["label"] for item in out["items"]}
+        self.assertEqual(labels["央行降准降息支持实体经济，流动性宽松利好股市"], "正向")
+        self.assertEqual(labels["监管从严查处违规减持，立案调查警示风险"], "负向")
+
+    def test_amplifier_words_double_the_weight(self):
+        plain = sources.analyze_policy_sentiment(self._brief({"金十数据": ["央行降准，流动性宽松"]}))
+        loud = sources.analyze_policy_sentiment(self._brief({"金十数据": ["罕见！央行降准，流动性宽松"]}))
+        self.assertGreater(loud["items"][0]["score"], plain["items"][0]["score"])
+
+    def test_official_versus_market_gap_opens_policy_window(self):
+        out = sources.analyze_policy_sentiment(self._brief({
+            "国务院 政策解读": ["有关负责人解读：政策支持实体经济发展，促进就业稳定"],
+            "金十数据": ["监管从严查处，制裁风险警示，市场担忧情绪蔓延"],
+        }))
+        self.assertEqual(out["official"]["total"], 1)
+        self.assertEqual(out["market"]["total"], 1)
+        self.assertGreater(out["gap"], 0.3)
+        self.assertIn("政策窗口期", out["window"]["label"])
+        self.assertIn("不作为投资依据", out["window"]["note"])
+
+    def test_only_policy_related_items_are_scored(self):
+        out = sources.analyze_policy_sentiment(self._brief({
+            "金十数据": ["某公司季度净利润暴涨超预期", "央行降准释放流动性"],
+        }))
+        self.assertEqual(out["overall"]["total"], 1)   # 与政策无关的多空新闻不计入政策舆情
+
+    def test_no_policy_news_is_honest(self):
+        out = sources.analyze_policy_sentiment(self._brief({"金十数据": ["今天天气不错"]}))
+        self.assertEqual(out["overall"]["total"], 0)
+        self.assertEqual(out["window"]["label"], "无政策舆情样本")
+
+
+class PolicyGraphTest(unittest.TestCase):
+    """⑤政策传导图谱：政策主体 → 受影响行业 → 产业链上下游节点。"""
+
+    def test_chain_links_subject_industry_and_nodes(self):
+        policy = sources.analyze_policy(
+            {"金十数据": [{"title": "美国对中国半导体设备实施出口管制并加征关税，制裁风险升温", "url": ""}]},
+            deep=False)
+        graph = sources.policy_chain_graph(policy)
+        self.assertTrue(graph["chains"])
+        buckets = {chain["bucket"] for chain in graph["chains"]}
+        self.assertIn("地缘与贸易政策", buckets)     # 出口管制 / 制裁命中地缘维度
+        self.assertIn("财政 · 关税与债务", buckets)   # 加征关税同时命中财政维度
+        chain = next(c for c in graph["chains"] if c["bucket"] == "地缘与贸易政策")
+        self.assertTrue(chain["subject"] and chain["industries"])
+        self.assertTrue(chain["upstream"] and chain["midstream"] and chain["downstream"])
+        self.assertIn(chain["direction"], ("净多", "净空", "中性"))
+        self.assertIn("→", chain["note"])
+        kinds = {node["kind"] for node in graph["nodes"]}
+        self.assertTrue({"subject", "industry", "上游", "中游", "下游"} <= kinds)
+        self.assertTrue(graph["edges"])
+
+    def test_graph_is_honest_without_signals(self):
+        graph = sources.policy_chain_graph(sources.analyze_policy({"金十数据": [{"title": "天气", "url": ""}]},
+                                                                  deep=False))
+        self.assertEqual(graph["chains"], [])
+        self.assertIn("未展开", graph["note"])
+
+
+class PolicyReasoningTest(unittest.TestCase):
+    """②高级分析师推理链 + 思维导图 + 结构化政策影响研报。"""
+
+    @staticmethod
+    def _policy(titles=("美联储鹰派转向暗示继续加息，美债收益率上行",
+                        "美国对数据中心设备加征关税并实施出口管制，制裁风险警示",
+                        "央行开展买断式逆回购，流动性净投放支持实体经济")):
+        return sources.analyze_policy({"华尔街见闻 快讯": [{"title": t, "url": ""} for t in titles]},
+                                      deep=False)
+
+    def test_four_steps_in_fixed_order(self):
+        reasoning = sources.analyze_policy_reasoning(self._policy())
+        self.assertEqual([step["label"] for step in reasoning["steps"]],
+                         ["宏观背景", "行业限制", "资金流向", "受益板块"])
+        self.assertEqual([step["no"] for step in reasoning["steps"]], ["01", "02", "03", "04"])
+        for step in reasoning["steps"]:
+            self.assertTrue(step["text"])
+            self.assertIn(step["key"], ("macro", "industry", "flow", "beneficiary"))
+
+    def test_steps_are_grounded_in_evidence(self):
+        policy = self._policy()
+        reasoning = sources.analyze_policy_reasoning(
+            policy, kb=sources.policy_knowledge(policy),
+            sentiment=sources.analyze_policy_sentiment(
+                {"华尔街见闻 快讯": [{"title": t, "url": ""} for t in
+                                    ("美联储鹰派转向暗示继续加息，美债收益率上行",)]}),
+            graph=sources.policy_chain_graph(policy))
+        evidence = [ev for step in reasoning["steps"] for ev in step["evidence"]]
+        self.assertTrue(evidence)
+        self.assertTrue({ev["type"] for ev in evidence} <= {"news", "kb"})
+        self.assertIn("货币政策", reasoning["steps"][0]["text"])    # 宏观背景引用当日真实统计
+        self.assertIn("政策净空", reasoning["steps"][1]["text"])   # 行业限制引用净空维度
+
+    def test_confidence_scales_with_sample_size(self):
+        self.assertEqual(sources._policy_confidence({"sources_hit": 8, "mentions": 20, "signals": 10}), "高")
+        self.assertEqual(sources._policy_confidence({"sources_hit": 2, "mentions": 4, "signals": 2}), "中")
+        self.assertEqual(sources._policy_confidence({}), "低")
+
+    def test_mindmap_structure(self):
+        policy = self._policy()
+        kb = sources.policy_knowledge(policy)
+        reasoning = sources.analyze_policy_reasoning(policy, kb=kb)
+        mindmap = sources.policy_mindmap(policy, reasoning, kb, sources.analyze_policy_sentiment({}),
+                                         sources.policy_chain_graph(policy),
+                                         {"lstm": {"summary": "—"}, "prophet": {"summary": "—"}})
+        self.assertIn("政策分析", mindmap["root"])
+        labels = [branch["label"] for branch in mindmap["branches"]]
+        self.assertIn("宏观背景", labels)
+        self.assertIn("产业链传导", labels)
+        self.assertIn("模型视角", labels)
+        for branch in mindmap["branches"]:
+            self.assertTrue(branch["children"], f"分支「{branch['label']}」没有子节点")
+
+    def test_research_note_rating_long_term_and_risks(self):
+        policy = self._policy()
+        kb = sources.policy_knowledge(policy)
+        sentiment = sources.analyze_policy_sentiment({})
+        graph = sources.policy_chain_graph(policy)
+        modifiers = sources.interpret_policy_modifiers(kb["query"])
+        reasoning = sources.analyze_policy_reasoning(policy, kb, sentiment, graph, modifiers)
+        note = sources.policy_research_note(policy, reasoning, kb, graph, sentiment, modifiers,
+                                            {"lstm": {"summary": "L"}, "prophet": {"summary": "P"}})
+        self.assertEqual(note["rating"], "政策承压（偏空）")
+        self.assertTrue(note["abstract"] and note["horizon"])
+        self.assertTrue(note["long_term"])
+        for item in note["long_term"]:
+            self.assertIn(item["nature"], ("结构性", "周期性"))
+            self.assertIn("个月", item["horizon"])
+            self.assertIn("→", item["impact"])
+        self.assertTrue(note["risks"])
+        self.assertIn("不作为投资依据", note["disclaimer"])
+
+    def test_deep_layer_is_honest_without_signals(self):
+        policy = sources.analyze_policy({"金十数据": [{"title": "今天天气不错", "url": ""}]}, deep=False)
+        reasoning = sources.analyze_policy_reasoning(policy)
+        self.assertIn("证据不足", reasoning["steps"][1]["text"])
+        note = sources.policy_research_note(policy, reasoning, sources.policy_knowledge(policy),
+                                            sources.policy_chain_graph(policy),
+                                            sources.analyze_policy_sentiment({}),
+                                            sources.interpret_policy_modifiers(""),
+                                            {"lstm": {"summary": "—"}, "prophet": {"summary": "—"}})
+        self.assertEqual(note["rating"], "政策中性（结构分化）")
+        self.assertTrue(any("样本覆盖有限" in risk for risk in note["risks"]))
+
+
+class PolicyModelTest(unittest.TestCase):
+    """⑥⑦LSTM 与 Prophet 式分解：真实算法、可复算、样本不足时诚实降级。"""
+
+    @staticmethod
+    def _series(closes, start="2026-01-05"):
+        day = sources.datetime.strptime(start, "%Y-%m-%d")
+        dates = []
+        for _ in closes:
+            while day.weekday() >= 5:
+                day += sources.timedelta(days=1)
+            dates.append(str(day.date()))
+            day += sources.timedelta(days=1)
+        return {"name": "测试序列", "source": "test", "dates": dates, "closes": closes}
+
+    @staticmethod
+    def _ar1_series(points=120, seed=7):
+        rng = random.Random(seed)
+        closes, level, prev, returns = [100.0], 100.0, 0.5, []
+        for _ in range(points):
+            ret = 0.75 * prev + rng.uniform(-0.05, 0.05)
+            returns.append(ret)
+            prev = ret
+            level *= (1 + ret / 100.0)
+            closes.append(round(level, 4))
+        return PolicyModelTest._series(closes), returns
+
+    def test_lstm_trains_and_forecasts(self):
+        series, returns = self._ar1_series()
+        out = sources.lstm_policy_forecast(series, epochs=60)
+        self.assertTrue(out["available"])
+        self.assertLess(out["loss_last"], out["loss_first"])          # 训练确实在优化
+        self.assertEqual(len(out["path"]), out["horizon"])
+        self.assertEqual([p["step"] for p in out["path"]], list(range(1, out["horizon"] + 1)))
+        # 学到 AR(1) 的符号：上一个收益为正时，首日外推同向。
+        self.assertEqual(out["path"][0]["ret"] > 0, (0.75 * returns[-1]) > 0)
+        self.assertIn("训练样本", out["summary"])
+        self.assertIn("模型情景", out["note"])
+
+    def test_lstm_policy_scenario_shifts_the_path(self):
+        series, _returns = self._ar1_series(points=60)
+        base = sources.lstm_policy_forecast(series, epochs=30)
+        loose = sources.lstm_policy_forecast(series, epochs=30, shock=0.8)
+        self.assertNotEqual(loose["shock_delta"], 0.0)
+        self.assertEqual(len(loose["shock_path"]), len(base["path"]))
+
+    def test_lstm_refuses_short_series(self):
+        out = sources.lstm_policy_forecast(self._series([100.0, 101.0, 102.0]))
+        self.assertFalse(out["available"])
+        self.assertEqual(out["path"], [])
+        self.assertIn("不外推", out["summary"])
+
+    def test_prophet_recovers_trend_seasonality_and_policy_shock(self):
+        rng = random.Random(11)
+        closes, level, day, event = [], 1000.0, 0, None
+        dates = []
+        while len(dates) < 80:
+            current = sources.datetime(2026, 1, 5) + sources.timedelta(days=day)
+            day += 1
+            if current.weekday() >= 5:
+                continue
+            season = 0.004 * math.sin(2 * math.pi * len(dates) / 5.0)
+            shock = 0.0
+            if len(dates) == 40:
+                shock, event = 0.02, str(current.date())
+            level *= 1 + 0.0015 + season + shock + rng.uniform(-0.002, 0.002)
+            dates.append(str(current.date()))
+            closes.append(round(level, 4))
+        dec = sources.prophet_policy_decompose({"name": "SYN", "source": "test", "dates": dates,
+                                                "closes": closes}, events=[event], changepoints=2)
+        self.assertTrue(dec["available"])
+        self.assertGreater(dec["r2"], 0.9)
+        self.assertGreater(dec["trend_total_pct"], 0)                      # 真值：温和上行趋势
+        self.assertGreater(dec["season_amplitude_pct"], 0.15)              # 真值：周度振幅 0.40%
+        self.assertLess(dec["season_amplitude_pct"], 0.8)
+        effect = dec["policy_effects"][0]
+        self.assertEqual(effect["event"], event)
+        self.assertGreater(effect["event_study_pct"], 1.4)                 # 真值：+2.0% 的政策跳变
+        self.assertLess(effect["event_study_pct"], 2.6)
+        self.assertEqual(effect["label"], "正向冲击")
+        self.assertGreater(dec["vol_ratio"], 1.0)                          # 政策窗口内波动放大
+        self.assertEqual(len(dec["forecast"]), dec["horizon"])
+        self.assertEqual(dec["seasonality_last5_pct"].__len__(), 5)
+
+    def test_prophet_notes_when_no_event_in_window(self):
+        dec = sources.prophet_policy_decompose(self._series([100 + i * 0.4 for i in range(40)]))
+        self.assertTrue(dec["available"])
+        self.assertEqual(dec["policy_effects"], [])
+        self.assertIn("不可辨识", dec["summary"])
+
+    def test_prophet_refuses_short_series(self):
+        out = sources.prophet_policy_decompose(self._series([100.0, 101.0]))
+        self.assertFalse(out["available"])
+        self.assertIn("不可辨识", out["summary"])
+
+    def test_series_sources(self):
+        klines = {"上证指数": {
+            "2026-09-01": {"close": 3900.0, "source": "eastmoney"},
+            "2026-09-02": {"close": 3910.0, "source": "eastmoney"},
+            "2026-09-03": {"close": 3925.0, "source": "eastmoney"},
+        }}
+        series = sources.policy_series_from_klines(klines)
+        self.assertEqual(series["name"], "上证指数")
+        self.assertEqual(series["source"], "eastmoney")
+        self.assertEqual(series["closes"], [3900.0, 3910.0, 3925.0])
+        self.assertEqual(series["dates"], ["2026-09-01", "2026-09-02", "2026-09-03"])
+        # 缓存的日 K 优先；没有缓存时回退合成演示序列，并明确标注为非真实数据。
+        sources.set_policy_klines(klines)
+        try:
+            self.assertEqual(sources.get_policy_series()["source"], "eastmoney")
+        finally:
+            sources.set_policy_klines({})
+        fallback = sources.get_policy_series()
+        self.assertEqual(fallback["source"], "synthetic")
+        self.assertIn("非真实市场数据", fallback["note"])
+        self.assertIn(fallback["event_date"], fallback["dates"])
+
+    def test_policy_shock_scalar_follows_stance(self):
+        dove = sources._policy_shock_scalar({"stance": "偏鸽"}, {"score": 1.5})
+        hawk = sources._policy_shock_scalar({"stance": "偏鹰"}, {"score": -1.5})
+        self.assertGreater(dove, 0)
+        self.assertLess(hawk, 0)
+        self.assertLessEqual(abs(dove), 1.0)
+        self.assertLessEqual(abs(hawk), 1.0)
+
+
+class PolicyDeepWiringTest(unittest.TestCase):
+    """深度层装配：analyze_policy(deep=True) / analyze_brief(deep_policy) / 推送卡片位置。"""
+
+    def setUp(self):
+        # collect_market_for_push() 会把抓到的日 K 缓存给政策模型层复用；
+        # MarketFreshnessTest 会替换 _fetch_ashare_klines 且不还原，这里显式清空缓存，
+        # 保证「无实时行情 → 合成演示序列」的断言不受用例执行顺序影响。
+        sources.set_policy_klines({})
+
+    def _kanpan(self):
+        return dict(
+            review=sources.analyze_ashare(market=sources._ASHARE_SNAPSHOT),
+            hk_review=sources.analyze_hk(market=sources._HK_SNAPSHOT),
+            us_review=sources.analyze_us(market=sources._US_SNAPSHOT),
+        )
+
+    def test_analyze_policy_deep_keys(self):
+        brief = {"华尔街见闻 快讯": [{"title": "美联储鹰派转向，暗示继续加息缩表", "url": ""}],
+                 "国务院 政策解读": [{"title": "有关负责人解读：政策支持实体经济发展", "url": ""}]}
+        policy = sources.analyze_policy(brief)          # deep 默认开启
+        for key in ("kb", "modifiers", "sentiment", "graph", "reasoning", "mindmap", "research", "models"):
+            self.assertIn(key, policy)
+        self.assertEqual(len(policy["reasoning"]["steps"]), 4)
+        self.assertIn("lstm", policy["models"])
+        self.assertIn("prophet", policy["models"])
+        self.assertLessEqual(len(policy["headline"]), 200)   # 总结句口径不受深度层影响
+
+    def test_analyze_brief_stays_shallow_by_default(self):
+        brief = {"金十数据": [{"title": "美联储加息", "url": ""}]}
+        self.assertNotIn("kb", sources.analyze_brief(brief)["policy"])
+        self.assertIn("kb", sources.analyze_brief(brief, deep_policy=True)["policy"])
+
+    def test_build_html_places_policy_right_after_daily_summary(self):
+        brief = {name: sources._demo_items(name) for name in sources.SOURCES}
+        out = sources.build_html(brief, **self._kanpan())
+
+        def at(label: str) -> int:
+            return out.index(f'<span class="tag">{label}</span>')
+
+        positions = [at(label) for label in ("AI 每日总结", "AI 政策分析", "AI 政策深度",
+                                             "AI 政策研报", "AI 板块机会")]
+        self.assertEqual(positions, sorted(positions))
+        self.assertLess(out.index("AI 板块机会"), out.index("AI 看盘"))
+
+    def test_build_html_renders_deep_layer_blocks(self):
+        brief = {name: sources._demo_items(name) for name in sources.SOURCES}
+        out = sources.build_html(brief, **self._kanpan())
+        for token in ("政策法规知识库检索", "LLM 对比分析", "政策术语口径（修饰词解读）", "政策舆情情感打分",
+                      "政策传导图谱", "分析师推理链", "政策影响思维导图", "LSTM · 中长期走势节奏",
+                      "Prophet 式分解 · 剥离季节看政策窗口", "政策影响研报（结构化结论）",
+                      "长远冲击", "风险提示", "政策窗口期"):
+            self.assertIn(token, out)
+        # 宏观背景 → 行业限制 → 资金流向 → 受益板块 四步齐全且顺序正确
+        steps = [out.index(f'<span class="tag">{label}</span>')
+                 for label in ("宏观背景", "行业限制", "资金流向", "受益板块")]
+        self.assertEqual(steps, sorted(steps))
+
+    def test_build_html_marks_synthetic_model_series(self):
+        brief = {"金十数据": [{"title": "央行降准降息，流动性宽松利好成长板块", "url": ""}]}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("合成演示序列", out)
+
+    def test_build_html_uses_injected_series(self):
+        brief = {"金十数据": [{"title": "央行降准降息，流动性宽松利好成长板块", "url": ""}]}
+        closes = [3800 + i * 4 for i in range(40)]
+        dates = [f"2026-07-{i + 1:02d}" for i in range(40)]
+        out = sources.build_html(brief, series={"name": "上证指数", "source": "eastmoney",
+                                               "dates": dates, "closes": closes}, **self._kanpan())
+        self.assertIn("上证指数", out)
+        self.assertNotIn("合成演示序列（无实时行情）", out)
+
+    def test_deep_layer_escapes_html(self):
+        brief = {"金十数据": [{"title": "美联储 <script>alert(1)</script> 加息，监管从严", "url": ""}]}
+        out = sources.build_html(brief, **self._kanpan())
+        self.assertIn("&lt;script&gt;", out)
+        self.assertNotIn("<script>alert", out)
+
+    def test_deep_cards_degrade_when_capacity_is_tight(self):
+        brief = {name: [{"title": f"{name} 的长标题快讯测试内容" * 3, "url": ""} for _ in range(20)]
+                 for name in sources.SOURCES}
+        tight = sources.build_html(brief, max_length=16000, **self._kanpan())
+        self.assertLessEqual(len(tight), 16000)
+        self.assertNotIn("AI 政策研报", tight)            # 深度层让位，主分析卡片保留
+        self.assertIn("AI 政策分析", tight)
+
+
 class BuildHtmlTest(unittest.TestCase):
+
     def _kanpan(self):
         """注入三市场快照，避免 HTML 测试打行情接口，并让看盘内容可断言。"""
         return dict(
@@ -823,7 +1300,8 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertNotIn('class="td-n td-bdr"', out)
         # 48 源 × 3 条 = 144 行，编号全表连续且不带来源名；按五大板块分组。
         total = len(sources.SOURCES) * 3
-        self.assertEqual(out.count("唯一原始标题"), total)
+        news_card = out[out.index("全网快讯"):]
+        self.assertEqual(news_card.count("唯一原始标题"), total)
         self.assertIn(f"共 {total} 条", out)
         self.assertIn(f">{total}</td>", out)
         card = out[out.index("全网快讯"):]
@@ -842,18 +1320,49 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertIn("AI 政策分析", out_small)   # AI 板块始终保留，只收敛快讯列表
 
     def test_build_html_shrinks_news_list_before_dropping_it(self):
-        # 字符额度越紧，快讯列表逐级收敛：3 条 → 2 条 → 1 条 → 整段省略；分析栏目始终保留。
+        # 字符额度越紧，按档位收敛：①每档内快讯 3 → 2 → 1 条；②再降政策深度层档位
+        # （全量 → 精简：思维导图与背景长文先去掉 → 整段省略）；③最后才整段省略快讯列表。
+        # 四个主分析栏目（每日总结 / 政策分析 / 板块机会 / 看盘）始终保留。
         brief = {name: [{"title": f"快讯条目 {si}-{i}：撑开字符额度的较长标题内容示例文本", "url": ""}
                         for i in range(20)] for si, name in enumerate(sources.SOURCES)}
         n = len(sources.SOURCES)
+
+        def shrink(previous: str) -> str:
+            return sources.build_html(brief, max_length=len(previous) - 100, **self._kanpan())
+
+        def news_count(html: str) -> int:
+            # 只数「全网快讯」卡片里的条目：政策舆情板块也会引用官方信息源的标题（合法行为）。
+            return html.count("快讯条目", html.index("全网快讯")) if "全网快讯" in html else 0
+
         full = sources.build_html(brief, **self._kanpan())
-        self.assertEqual(full.count("快讯条目"), n * 3)
-        two = sources.build_html(brief, max_length=len(full) - 100, **self._kanpan())
-        self.assertEqual(two.count("快讯条目"), n * 2)
-        one = sources.build_html(brief, max_length=len(two) - 100, **self._kanpan())
-        self.assertEqual(one.count("快讯条目"), n)
-        none = sources.build_html(brief, max_length=len(one) - 100, **self._kanpan())
-        self.assertNotIn("全网快讯", none)
+        self.assertEqual(news_count(full), n * 3)
+        self.assertIn("政策影响思维导图", full)          # 政策深度层全量
+        two = shrink(full)
+        self.assertEqual(news_count(two), n * 2)
+        one = shrink(two)
+        self.assertEqual(news_count(one), n)
+        compact = shrink(one)
+        # 快讯已到每源 1 条，再压就先降政策深度层档位：思维导图与背景长文让位，快讯条数回到每源 3 条。
+        self.assertNotIn("政策影响思维导图", compact)
+        self.assertIn("AI 政策深度", compact)
+        self.assertGreaterEqual(news_count(compact), n)
+        slim = compact
+        while "AI 政策深度" in slim:                      # 继续压：政策深度层整段省略
+            slim = shrink(slim)
+        self.assertNotIn("AI 政策深度", slim)
+        self.assertIn("全网快讯", slim)                   # 快讯列表仍在（省略是最后一步）
+        for kept in ("AI 每日总结", "AI 政策分析", "AI 板块机会", "AI 看盘"):
+            self.assertIn(kept, slim)
+        # 继续压缩才会走到最后一档（快讯整段省略）：档位之间不是严格单调，
+        # 因此按「压到快讯消失为止」判定，同时确认四个主分析栏目始终保留。
+        none = slim
+        for _ in range(6):
+            none = shrink(none)
+            if "全网快讯" not in none:
+                break
+        self.assertNotIn("全网快讯", none)                # 最后才整段省略快讯
+        for kept in ("AI 每日总结", "AI 政策分析", "AI 板块机会", "AI 看盘"):
+            self.assertIn(kept, none)
         self.assertNotIn("快讯条目", none)
         for out in (two, one, none):
             self.assertIn("AI 每日总结", out)
