@@ -148,7 +148,7 @@ class GateTest(unittest.TestCase):
         sensitive.reset()
 
     def test_clean_payload_passes(self):
-        gate = sensitive.check_push("章鱼 AI·全景分析（市场因子分析）", "<div>现货铂金上涨</div>")
+        gate = sensitive.check_push("章鱼 AI·全景分析（量化分析）", "<div>现货铂金上涨</div>")
         self.assertTrue(gate["ok"], gate)
         self.assertIn("放行", gate["reason"])
         self.assertEqual(gate["hits"], [])
@@ -219,7 +219,7 @@ class DemoDataTest(unittest.TestCase):
             hk_review=sources.analyze_hk(market=sources._HK_SNAPSHOT),
             us_review=sources.analyze_us(market=sources._US_SNAPSHOT),
         )
-        gate = sensitive.check_push("章鱼 AI·全景分析（市场因子分析）", html)
+        gate = sensitive.check_push("章鱼 AI·全景分析（量化分析）", html)
         self.assertTrue(gate["ok"], json.dumps(gate, ensure_ascii=False))
 
 
