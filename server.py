@@ -28,7 +28,7 @@ PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus
 PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "oai.1").strip()
 SOURCES = sources.SOURCES
 
-# /api/brief 的结果缓存（并发抓取五大板块 48 个源仍需数秒，5 分钟内不重复抓取）。
+# /api/brief 的结果缓存（并发抓取五大板块 49 个源仍需数秒，5 分钟内不重复抓取）。
 _BRIEF_CACHE = {"at": 0.0, "data": None}
 _BRIEF_TTL = 300
 # /api/market 与推送闸门共用的大盘数据缓存（东方财富日 K + 新鲜度检查）。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""章鱼 AI·全景分析 —— 五大板块 48 个数据源抓取采集器（零第三方依赖，仅标准库）。
+"""章鱼 AI·全景分析 —— 五大板块 49 个数据源抓取采集器（零第三方依赖，仅标准库）。
 
 为什么这么设计
 ------------
@@ -10,7 +10,7 @@
 - 6 个热搜/热点源（知乎、抖音、微博、虎扑、AI Hot、Google news 中文）来自
   ourongxing/newsnow 项目，使用直接 API / HTML 抓取。
 - 「政策发布 · 官方信息源」板块：国务院 / 部委政策发布列表页（changwu/china-policy-sites 清单，
-  服务端渲染、无 RSS，按链接正则抓）+ 境外央行 / 监管机构官方 RSS·Atom
+  服务端渲染、无 RSS，按链接正则抓）+ 中国新闻社时政 RSS + 境外央行 / 监管机构官方 RSS·Atom
   （angelinajh/regtech-policy-tracker 的做法）。
 - 「全球政经媒体」板块：edoardottt/news-list 清单里的政治 / 地缘 / 经济头部媒体官方 RSS。
 - 「公民科技 · 政治透明度」板块：g0v 生态立法院开放 API、keepittechie/equitystack 公开接口、GovTrack RSS。
@@ -136,6 +136,8 @@ SOURCE_META = [
     {"name": "证监会 新闻发布",   "section": "policy", "page": "https://www.csrc.gov.cn/csrc/xwfb/index.shtml",
      "pattern": r"csrc\.gov\.cn/csrc/c(?:100028|106311|100039)/c\w+/content\.shtml"},
     {"name": "香港特区政府 新闻公报", "section": "policy", "feed": "https://www.info.gov.hk/gia/rss/general_zh.xml"},
+    # 境内官媒：中国新闻社（中新社）时政新闻官方 RSS，中央 / 部委政策发布与人事任免的官媒口径。
+    {"name": "中国新闻社 时政", "section": "policy", "feed": "https://www.chinanews.com.cn/rss/china.xml"},
     # 境外：angelinajh/regtech-policy-tracker 的做法 —— 直接订阅央行 / 监管机构官方 RSS（Atom 亦可）。
     {"name": "美联储 新闻稿",     "section": "policy", "feed": "https://www.federalreserve.gov/feeds/press_all.xml"},
     {"name": "欧洲央行 新闻稿",   "section": "policy", "feed": "https://www.ecb.europa.eu/rss/press.html"},
@@ -383,6 +385,13 @@ _DEMO = {
         "香港特別行政區政府公布《香港特別行政區經濟和社會發展第一個五年規劃（2026—2030年）》",
         "立法會研究「生態＋旅遊」事宜小組委員會考察香港聯合國教科文組織世界地質公園",
         "衞生防護中心調查一宗猴痘確診個案",
+    ],
+    "中国新闻社 时政": [
+        "中共中央办公厅 国务院办公厅印发《关于分类推进高校改革的意见》",
+        "国务院任免国家工作人员",
+        "市场监管总局发布《婴幼儿配方食品标签标识问答》",
+        "两部门：到2030年我国农作物耕种收综合机械化率将超80%",
+        "国家药监局：多项措施助力创新药、创新医疗器械发展提速",
     ],
     "美联储 新闻稿": [
         "Federal Reserve issues FOMC statement",
@@ -2124,8 +2133,8 @@ _POLICY_SENT_NEG = ["收紧", "从严", "查处", "处罚", "立案", "制裁", 
                     "sanction*", "tariff*", "crackdown", "curb*", "probe*", "warn*", "risk*", "plunge*", "ban"]
 _POLICY_SENT_AMPLIFY = ["坚决", "严厉", "全面", "罕见", "史上最大", "大幅", "重磅", "紧急", "首次"]
 # 官媒 / 官方口径识别：来源属于官方信息源，或标题带官方发布 / 解读特征。
-_OFFICIAL_VOICE_SOURCES = ["国务院", "发改委", "财政部", "商务部", "证监会", "特区政府", "美联储", "欧洲央行",
-                           "SEC", "联邦公报", "GOV.UK", "FCA"]
+_OFFICIAL_VOICE_SOURCES = ["国务院", "发改委", "财政部", "商务部", "证监会", "特区政府", "中国新闻社", "中新社",
+                           "美联储", "欧洲央行", "SEC", "联邦公报", "GOV.UK", "FCA"]
 _OFFICIAL_VOICE_MARKERS = ["解读", "发布会", "答记者问", "有关负责人", "新闻发言人", "社论", "评论员", "官方",
                            "回应", "印发", "发布会实录", "声明", "公告"]
 
@@ -2172,8 +2181,8 @@ def _sentiment_bucket(scores: list) -> dict:
 def analyze_policy_sentiment(brief: dict) -> dict:
     """④政策舆情情感打分：对政策发布后的新闻舆情与官媒解读即时打分（正向 / 中性 / 负向）。
 
-    统计口径：命中政策维度关键词的条目，**或来自官方信息源**（国务院 / 部委 / 央行 / 境外监管机构，
-    官媒解读本身就是政策舆情）的条目；并把「官媒 / 官方口径」与「市场化媒体解读」分开聚合，
+    统计口径：命中政策维度关键词的条目，**或来自官方信息源**（国务院 / 部委 / 中国新闻社 /
+    境外央行与监管机构，官媒解读本身就是政策舆情）的条目；并把「官媒 / 官方口径」与「市场化媒体解读」分开聚合，
     两者的情绪差就是政策窗口期的预期差信号（``gap`` / ``window``）。
     当日没有政策相关舆情时如实标注，不输出情绪结论。
     """

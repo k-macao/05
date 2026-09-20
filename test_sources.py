@@ -55,15 +55,15 @@ class ParseChannelTest(unittest.TestCase):
 
 
 class SourceDefinitionTest(unittest.TestCase):
-    def test_forty_eight_sources_in_five_sections(self):
-        # 12 财经快讯 + 6 热搜热点 + 14 政策发布 · 官方信息源 + 12 全球政经媒体 + 4 公民科技 · 政治透明度。
-        self.assertEqual(len(sources.SOURCES), 48)
-        self.assertEqual(len(sources.SOURCE_META), 48)
-        self.assertEqual(len(set(sources.SOURCES)), 48, "数据源名称必须唯一")
+    def test_forty_nine_sources_in_five_sections(self):
+        # 12 财经快讯 + 6 热搜热点 + 15 政策发布 · 官方信息源 + 12 全球政经媒体 + 4 公民科技 · 政治透明度。
+        self.assertEqual(len(sources.SOURCES), 49)
+        self.assertEqual(len(sources.SOURCE_META), 49)
+        self.assertEqual(len(set(sources.SOURCES)), 49, "数据源名称必须唯一")
         names = [m["name"] for m in sources.SOURCE_META]
         self.assertEqual(names, sources.SOURCES)
         counts = {sec["key"]: sec["count"] for sec in sources.section_catalog()}
-        self.assertEqual(counts, {"finance": 12, "trending": 6, "policy": 14, "world": 12, "civic": 4})
+        self.assertEqual(counts, {"finance": 12, "trending": 6, "policy": 15, "world": 12, "civic": 4})
 
     def test_every_source_has_a_fetch_method(self):
         for meta in sources.SOURCE_META:
@@ -221,6 +221,19 @@ class SectionTest(unittest.TestCase):
         # 解读 / 旧栏目链接不算条目。
         self.assertFalse(re.search(meta["发改委 政策发布"]["pattern"], "https://www.ndrc.gov.cn/xxgk/jd/jd/202609/t20260917_1.html"))
         self.assertFalse(re.search(meta["证监会 新闻发布"]["pattern"], "https://www.csrc.gov.cn/csrc/c100029/c7473708/content.shtml"))
+
+    def test_chinanews_policy_source(self):
+        # 中国新闻社 时政：政策板块境内的官媒 RSS 源（中新社时政新闻官方订阅）。
+        meta = sources.source_meta("中国新闻社 时政")
+        self.assertIsNotNone(meta)
+        self.assertEqual(meta["section"], "policy")
+        self.assertEqual(meta["feed"], "https://www.chinanews.com.cn/rss/china.xml")
+        # 官媒口径：舆情情感打分里计入「官媒 / 官方口径」，与市场化解读分开统计。
+        self.assertTrue(sources._is_official_voice("中国新闻社 时政", ""))
+        # 兜底标题至少一条命中政策维度（监管 / 规划类政策新闻），离线也有政策信号。
+        demos = [it["title"] for it in sources._demo_items("中国新闻社 时政")]
+        self.assertGreaterEqual(len(demos), 1)
+        self.assertTrue(any(sources._policy_tags(sources._policy_norm(t)) for t in demos))
 
     def test_decode_honours_meta_charset(self):
         gbk_page = '<html><head><meta charset="gb2312"></head><body>财政部 政策发布</body></html>'.encode("gb18030")
@@ -1298,7 +1311,7 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertIn("唯一原始标题", out)
         self.assertNotIn("覆盖 18 个数据源", out)
         self.assertNotIn('class="td-n td-bdr"', out)
-        # 48 源 × 3 条 = 144 行，编号全表连续且不带来源名；按五大板块分组。
+        # 49 源 × 3 条 = 147 行，编号全表连续且不带来源名；按五大板块分组。
         total = len(sources.SOURCES) * 3
         news_card = out[out.index("全网快讯"):]
         self.assertEqual(news_card.count("唯一原始标题"), total)

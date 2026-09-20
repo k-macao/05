@@ -36,13 +36,13 @@ python3 -m http.server 8080
 
 页面与推送的板块顺序：`AI 每日总结 → AI 政策分析 → AI 政策深度 → AI 政策研报 → AI 板块机会 → AI 看盘 → 全网快讯`。
 
-脚本按 **五大板块并发抓取 48 个数据源**（零第三方依赖，仅标准库；网络不可用时逐源自动回退内置演示数据）。板块是抓取与呈现的分组口径：`sources.SECTIONS` 定义板块，`SOURCE_META` 里每个源带 `section` 归属，`collect_section("policy")` 可只抓某一板块，`GET /api/sections` 返回板块目录，`GET /api/brief?section=policy` 只返回该板块的抓取结果。
+脚本按 **五大板块并发抓取 49 个数据源**（零第三方依赖，仅标准库；网络不可用时逐源自动回退内置演示数据）。板块是抓取与呈现的分组口径：`sources.SECTIONS` 定义板块，`SOURCE_META` 里每个源带 `section` 归属，`collect_section("policy")` 可只抓某一板块，`GET /api/sections` 返回板块目录，`GET /api/brief?section=policy` 只返回该板块的抓取结果。
 
 | 板块 | 源数 | 内容 | 抓取方式 | 参考项目 |
 | --- | --- | --- | --- | --- |
 | 财经快讯 | 12 | MKTNews、华尔街见闻、财联社、雪球、格隆汇、法布财经、金十 | rebang.vip 聚合通道（服务端渲染，链接回指源站） | — |
 | 热搜热点 | 6 | 知乎、抖音、微博、虎扑、AI Hot、Google news 中文 | 直连 API / RSS | [ourongxing/newsnow](https://github.com/ourongxing/newsnow) |
-| 政策发布 · 官方信息源 | 14 | 国务院最新政策 / 政策解读 / 政务联播、发改委、财政部、商务部、证监会、香港特区政府新闻公报；美联储、欧洲央行、美国 SEC、美国联邦公报总统文件、英国财政部 GOV.UK、英国 FCA | 境内：政策发布列表页 + 链接正则（无 RSS）；境外：官方 RSS / Atom | [changwu/china-policy-sites](https://github.com/changwu/china-policy-sites) · [angelinajh/regtech-policy-tracker](https://github.com/angelinajh/regtech-policy-tracker) |
+| 政策发布 · 官方信息源 | 15 | 国务院最新政策 / 政策解读 / 政务联播、发改委、财政部、商务部、证监会、香港特区政府新闻公报、中国新闻社时政；美联储、欧洲央行、美国 SEC、美国联邦公报总统文件、英国财政部 GOV.UK、英国 FCA | 境内：政策发布列表页 + 链接正则（政府站无 RSS）+ 中国新闻社时政 RSS；境外：官方 RSS / Atom | [changwu/china-policy-sites](https://github.com/changwu/china-policy-sites) · [angelinajh/regtech-policy-tracker](https://github.com/angelinajh/regtech-policy-tracker) |
 | 全球政经媒体 | 12 | Reuters（经 Google News 检索）、Bloomberg 政治 / 经济、Financial Times、纽约时报国际、华盛顿邮报政治、POLITICO、Foreign Policy、The Diplomat、经济学人财经、日经亚洲、南华早报 | 官方 RSS | [edoardottt/news-list](https://github.com/edoardottt/news-list) |
 | 公民科技 · 政治透明度 | 4 | g0v 生态立法院議案（ly.govapi.tw）、EquityStack 政策承诺 / 法案追踪、GovTrack 国会重大立法动态 | 开放 JSON API / RSS | [g0v](https://github.com/g0v) · [keepittechie/equitystack](https://github.com/keepittechie/equitystack) |
 
@@ -65,8 +65,8 @@ PUSHPLUS_TOKEN=xxx python3 push_brief.py
 - `PUSHPLUS_MEMBER=0`：**推送容量口径**。默认即按 PushPlus 会员的 **10 万字** 上限生成（留 2,000 字符安全余量 → 98,000 字符，每个数据源最多 20 条）；普通/实名账号（2 万字上限）显式设为 `0` 即退回精选口径（19,500 字符 · 每源 3 条）。
 - `PUSHPLUS_MAX_CHARS=98000`：自定义单条推送字符上限（覆盖上面的会员/普通默认值；超上限时自动逐级收敛每源条数，保证发得出去）。
 - `PUSHPLUS_ITEMS_PER_SOURCE=20`：推送口径里每个数据源最多展示条数（`all` = 抓到的全部快讯）。注意：正文最后的「全网快讯」列表固定按 **每源 3 条** 输出（`sources.NEWS_ITEMS_PER_SOURCE`），该变量只能把条数往下压（如设 `1` 即每源 1 条），设成大于 3 不会让快讯列表变长——多抓的条数用于「AI 每日总结 / 板块机会 / 政策分析」的信号统计。
-- `BRIEF_FETCH_LIMIT=20`：自定义每个数据源的抓取条数（默认与展示口径一致，避免「额度放宽了但内容没变多」）。
-- `BRIEF_FETCH_WORKERS=8`：并发抓取线程数（48 个源互不依赖，默认 8 线程；设 `1` 退回串行）。
+- `BRIEF_FETCH_LIMIT=20`：自定义每个数据源的抓取条数（默认与展示口径一致，避免「额度放宽了但内默认与展示口径一致，避免「额度放宽了但内容没变多」）。
+- `BRIEF_FETCH_WORKERS=8`：并发抓取线程数（49 个源互不依赖，默认 8 线程；设 `1` 退回串行）。
 - `SKIP_MARKET_CHECK=1`：跳过新鲜度检查，直接推送。
 - `MARKET_FRESHNESS_FORCE=fresh|stale`：强制检查结果，用于联调测试。
 - `SKIP_SENSITIVE_CHECK=1`：跳过敏感词检测（测试 / 应急，不建议日常开启）。
