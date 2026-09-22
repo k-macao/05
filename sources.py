@@ -1300,6 +1300,8 @@ def analyze_brief(brief: dict, deep_policy: bool = False) -> dict:
          "text": _compose_sectors(sectors_up, sectors_down)},
         {"key": "flow", "label": "资金流向分析", "text": flow},
     ]
+    # 情绪热力图：关键词级线索（零外部依赖、可离线）
+    heatmap = analyze_keyword_heatmap(brief)
     return {
         "headline": headline,
         "bias": bias,
@@ -1314,6 +1316,7 @@ def analyze_brief(brief: dict, deep_policy: bool = False) -> dict:
         "pressure_sectors": pressure_sectors,
         "flow": flow,
         "points": points,
+        "heatmap": heatmap,
         # 深度层（知识库检索 / 推理链 / 模型）默认不在这里跑：analyze_brief 被 /api 与测试高频调用，
         # 推送与页面渲染走 analyze_policy(deep=True) 显式开启，避免重复计算。
         "policy": analyze_policy(brief, deep=deep_policy),
@@ -1323,6 +1326,408 @@ def analyze_brief(brief: dict, deep_policy: bool = False) -> dict:
              "items": section_items.get(key, 0), "sources": len(section_sources.get(key, ()))}
             for key in SECTION_KEYS if section_items.get(key, 0) > 0
         ],
+    }
+
+
+# ---------------------------------------------------------------- AI 情绪热力图 · 关键词级线索（面向股市投资）
+# 设计思路
+# --------
+# - 粒度：主题（AI 算力/光通信/半导体…）是板块级归因，热力图下沉到「关键词」级——
+#   每条新闻标题命中的具体关键词（如“AI”“光纤”“黄金”“降息”）单独计热度与情绪，
+#   让投资者看到“资金到底在炒什么词”，避免板块口径过粗掩盖结构。
+# - 归因：关键词来自 _THEMES（投资主线词库），中文子串 / 英文单词边界匹配（* 允许后缀），
+#   与 “AI 每日总结 / 板块机会” 同一套多空词库判定情绪，零外部依赖、可离线。
+# - 指标：为股市投资设计的 9 维量化（全部可复算、阈值写死）：
+#     ① 热度 Heat 0-100：提及数 × 跨源对数加权后归一，反映关注度（关注度越高越可能带来交易机会，也意味拥挤）。
+#     ② 情绪分 Sentiment -1…+1：(bull-bear)/signals，方向与强度；绝对值越大一致性越高。
+#     ③ 净信号 Net：bull - bear，绝对强度。
+#     ④ 跨源数 Sources & 共振 Resonance：命中多少个独立数据源，跨源越多越可信，单源需谨慎。
+#     ⑤ 分歧度 Divergence = 1 - |情绪分|，多空撕裂程度；高分歧易波动、低分歧趋势稳。
+#     ⑥ 爆发系数 Burst = Heat × |情绪分|，高热+强方向 = 主线爆发点，适合短线跟踪。
+#     ⑦ 资金倾向 Flow Tilt：偏多+高热=流入，偏空+高热=流出，其余观望。
+#     ⑧ 投资评级 Rating：综合热度与情绪的行动标签（强多·机会/偏多·关注/中性·观望/偏空·谨慎/强空·回避），附操作提示。
+#     ⑨ 风险等级 Risk：基于负面情绪与分歧度评估回撤风险（低/中/高）。
+# - 证据：每个关键词保留最多 3 条支撑新闻（按“方向一致优先”排序，同源同题去重），标题即线索，避免黑箱。
+# - 关联：关键词→所属主题→A股概念/产业链映射（_HEATMAP_STOCK_MAP），以及命中它的政策维度（_policy_tags），便于产业链推演。
+# - 诚实：空简报或零命中时如实标注，不编造热力；热度为 0 时情绪与评级均为中性。
+#
+# 对投资的用法（仅统计信号，不构成投资建议）
+#   · 看“沸腾 + 强多”格子找主线，看“沸腾 + 强空”格子防风险；
+#   · 共振低（1-2 源）的是噪音，共振高（≥4 源）的是确认；
+#   · 分歧高时适合等待方向确认，爆发系数高时注意追高风险。
+
+_HEATMAP_STOCK_MAP = {
+    "AI": "AI算力/CPO (浪潮信息/中际旭创)",
+    "人工智能": "AI应用/模型 (科大讯飞/云从科技)",
+    "算力": "算力硬件/服务器 (工业富联/紫光股份)",
+    "大模型": "大模型/算力租赁 (昆仑万维/三六零)",
+    "数据中心": "数据中心/液冷 (润泽科技/光环新网)",
+    "OpenAI": "海外AI映射 (万兴科技/汤姆猫)",
+    "机器人": "机器人/减速器 (埃斯顿/拓普集团)",
+    "GPU": "GPU/算力芯片 (海光信息/寒武纪)",
+    "光纤": "光通信/光模块 (长飞光纤/中际旭创)",
+    "光通信": "光通信 (亨通光电/烽火通信)",
+    "光模块": "光模块/CPO (中际旭创/新易盛)",
+    "半导体": "半导体/设备 (中芯国际/北方华创)",
+    "芯片": "芯片/晶圆 (兆易创新/韦尔股份)",
+    "台积电": "晶圆代工映射 (中芯国际/华虹公司)",
+    "英伟达": "海外算力映射 (工业富联/浪潮信息)",
+    "黄金": "贵金属/有色 (山东黄金/紫金矿业)",
+    "白银": "白银/有色 (盛达资源/兴业银锡)",
+    "铂金": "铂族金属 (贵研铂业)",
+    "原油": "石油石化 (中国石油/中国石化)",
+    "稀土": "稀土永磁 (北方稀土/包钢股份)",
+    "矿产": "有色/资源 (洛阳钼业/华友钴业)",
+    "美联储": "美元/利率敏感 (银行/成长分化)",
+    "央行": "流动性/金融 (银行/券商)",
+    "加息": "加息受益/压制 (银行利差/成长承压)",
+    "降息": "降息受益 (成长/券商/地产链)",
+    "贝森特": "美财政/汇率 (出口链/黄金)",
+    "汇率": "汇率/出口 (出口链/跨境电商)",
+    "美元": "美元指数 (有色/出口)",
+    "流动性": "流动性 (券商/成长)",
+    "利率": "利率敏感 (银行/地产)",
+    "伊朗": "地缘/油运 (油运/军工)",
+    "制裁": "制裁/国产替代 (半导体设备/军工)",
+    "特朗普": "特朗普交易 (出口/关税链)",
+    "医药": "医药/创新药 (恒瑞医药/药明康德)",
+    "诺和诺德": "GLP-1映射 (诺泰生物/华东医药)",
+    "自动驾驶": "智驾/汽车智能 (德赛西威/华阳集团)",
+    "新能源车": "新能源车 (比亚迪/宁德时代)",
+    "特斯拉": "特斯拉链 (拓普集团/三花智控)",
+    "楼市": "地产链 (保利发展/万科)",
+    "地产": "地产开发 (招商蛇口/保利发展)",
+    "房价": "地产/建材 (建材/家居)",
+    "消费": "大消费 (贵州茅台/海天味业)",
+    "亚马逊": "跨境电商/消费 (吉宏股份/焦点科技)",
+    "SpaceX": "商业航天 (航天电子/中国卫星)",
+}
+
+_HEATMAP_HINTS = {
+    "AI 算力": {"bull": "算力主线放量，关注光模块/服务器链，忌追高", "bear": "AI泡沫争议扰动，规避高估值标的", "neutral": "AI分歧加大，等催化确认"},
+    "光通信": {"bull": "光纤扩产利好，关注光模块龙头，防涨后回调", "bear": "光通信承压，等待订单验证", "neutral": "光通信轮动，关注中际旭创等"},
+    "半导体": {"bull": "半导体景气回升，关注设备与晶圆", "bear": "制裁扰动，规避出口受限链", "neutral": "半导体分化，看国产替代进度"},
+    "贵金属": {"bull": "贵金属避险走强，关注有色龙头", "bear": "贵金属回落，防追高", "neutral": "贵金属震荡，关注美元与利率"},
+    "美联储": {"bull": "宽松预期升温，利好成长与港股", "bear": "收紧预期压制估值，控仓位", "neutral": "美联储观望，等议息确认"},
+    "地缘": {"bull": "地缘缓和利好风险偏好", "bear": "地缘扰动升温，规避油运与军工波动", "neutral": "地缘分化，关注避险资产"},
+    "医药": {"bull": "医药反弹，关注创新药与GLP-1链", "bear": "医药承压，防集采扰动", "neutral": "医药轮动，看临床数据"},
+    "智驾": {"bull": "智驾催化密集，关注汽车智能链", "bear": "智驾退潮，规避高位股", "neutral": "智驾分化，等政策落地"},
+    "地产": {"bull": "地产政策托底，关注保利等龙头", "bear": "地产承压，规避高负债房企", "neutral": "地产观望，看销售数据"},
+    "消费": {"bull": "消费修复，关注白酒与电商", "bear": "消费疲软，规避可选消费", "neutral": "消费轮动，关注必选"},
+    "航天": {"bull": "商业航天催化，关注卫星与火箭链", "bear": "航天退潮，防题材回落", "neutral": "航天主题轮动"},
+}
+
+_HEATMAP_INDICATORS = [
+    {"key": "heat", "label": "热度", "formula": "提及×(1+ln(跨源+1))归一0-100", "use": "关注度；>75沸腾需防拥挤回落"},
+    {"key": "sentiment", "label": "情绪分", "formula": "(多-空)/信号 -1…+1", "use": "方向与强度；|0.6|以上为强一致"},
+    {"key": "net", "label": "净信号", "formula": "多-空", "use": "绝对强度；|≥3|为强信号"},
+    {"key": "sources", "label": "跨源/共振", "formula": "命中源数", "use": "可信度；≥4源为确认，1-2源为噪音"},
+    {"key": "divergence", "label": "分歧度", "formula": "1-|情绪分|", "use": "撕裂度；高分歧易波动，低分歧趋势稳"},
+    {"key": "burst", "label": "爆发系数", "formula": "热度×|情绪分|", "use": "主线爆发点；高分适合短线跟踪但忌追高"},
+    {"key": "flow", "label": "资金倾向", "formula": "情绪×热度", "use": "流入/流出/观望；判断跟随或回避"},
+    {"key": "rating", "label": "投资评级", "formula": "热度+情绪综合", "use": "强多·机会/偏多·关注/观望/偏空·谨慎/强空·回避"},
+    {"key": "risk", "label": "风险等级", "formula": "负面情绪+分歧", "use": "低/中/高；高风险需控仓位"},
+]
+
+def _heatmap_display(keyword: str) -> str:
+    return keyword.rstrip("*")
+
+def _heatmap_level(heat: int) -> str:
+    if heat >= 75:
+        return "沸腾"
+    if heat >= 50:
+        return "热"
+    if heat >= 25:
+        return "温"
+    return "冷"
+
+def _heatmap_sentiment_label(score: float, signals: int) -> str:
+    if signals == 0:
+        return "中性"
+    if score >= 0.3:
+        return "偏多"
+    if score <= -0.3:
+        return "偏空"
+    return "中性"
+
+def _heatmap_flow(sentiment: float, heat: int) -> str:
+    if sentiment > 0.3 and heat >= 40:
+        return "流入"
+    if sentiment < -0.3 and heat >= 40:
+        return "流出"
+    return "观望"
+
+def _heatmap_risk(sentiment: float, divergence: float, heat: int) -> str:
+    if sentiment <= -0.5 and heat >= 50:
+        return "高"
+    if sentiment <= -0.3 and heat >= 40:
+        return "中"
+    if divergence >= 0.65 and heat >= 50:
+        return "中"
+    return "低"
+
+def _heatmap_confidence(sources: int, mentions: int) -> str:
+    if sources >= 5 and mentions >= 8:
+        return "高"
+    if sources >= 3 and mentions >= 4:
+        return "中"
+    if sources >= 2:
+        return "中"
+    return "低"
+
+def _heatmap_rating(sentiment: float, heat: int, net: int, signals: int) -> str:
+    if signals == 0:
+        return "中性·观望"
+    if sentiment >= 0.6 and net >= 3 and heat >= 60:
+        return "强多·机会"
+    if sentiment <= -0.6 and net <= -3 and heat >= 60:
+        return "强空·回避"
+    if sentiment >= 0.3 and heat >= 50:
+        return "偏多·关注"
+    if sentiment <= -0.3 and heat >= 50:
+        return "偏空·谨慎"
+    return "中性·观望"
+
+def _heatmap_hint(tag: str, sentiment_label: str) -> str:
+    hints = _HEATMAP_HINTS.get(tag) or {}
+    if sentiment_label == "偏多":
+        return hints.get("bull") or f"{tag}偏多，关注主线，忌追高"
+    if sentiment_label == "偏空":
+        return hints.get("bear") or f"{tag}偏空，规避相关资产"
+    return hints.get("neutral") or f"{tag}分化，等待催化"
+
+def analyze_keyword_heatmap(brief: dict, top_n: int = 40) -> dict:
+    """AI 情绪热力图：关键词级热度与情绪（面向股市投资）。
+
+    对每条新闻标题提及的 _THEMES 关键词单独计：
+      mentions 跨提及数、跨源数、bull/bear/net/signals、情绪分、热度分(0-100)、
+      热度等级、共振、分歧度、爆发系数、资金倾向、投资评级、风险等级、置信度，
+      并保留每个关键词的 3 条线索新闻（方向一致优先）与关联政策维度、概念映射。
+
+    返回：
+        keywords  全部命中关键词按热度排序 [{keyword, display, tag, concept, mentions, sources,
+                   bull, bear, net, signals, sentiment, sentiment_label, heat, heat_level,
+                   divergence, burst, flow, risk, confidence, rating, hint, reading,
+                   evidence[{title, source, url, direction}], policy_tags, heat_raw}]
+        total_hit 命中关键词数
+        total_mentions 提及总条次（去重前，跨关键词会重复计数）
+        total_signals 参与多空判定的信号总条次
+        overall_bias 整体偏向（由全部信号 bull/bear 决定）
+        top_opportunity 机会关键词 Top3（偏多且热度高，按 burst 排序）
+        top_pressure 风险关键词 Top3（偏空且热度高）
+        headline 热力图总结句
+        indicators 指标说明（供前端图例使用）
+        note 口径说明
+    """  
+    # 1) 构建去重后的关键词表：display -> {tag, raws}
+    keyword_meta: dict = {}
+    for tag, kws in _THEMES:
+        for kw in kws:
+            display = _heatmap_display(kw)
+            if display not in keyword_meta:
+                keyword_meta[display] = {"tag": tag, "raws": []}
+            if kw not in keyword_meta[display]["raws"]:
+                keyword_meta[display]["raws"].append(kw)
+
+    stats: dict = {}
+    for display, meta in keyword_meta.items():
+        stats[display] = {
+            "keyword": display,
+            "display": display,
+            "tag": meta["tag"],
+            "raws": meta["raws"],
+            "mentions": 0,
+            "sources": set(),
+            "bull": 0,
+            "bear": 0,
+            "evidence": [],
+        }
+
+    total_titles = 0
+    # 2) 逐条标题归因
+    for name, items in (brief or {}).items():
+        for item in items or []:
+            title = item.get("title", "") or ""
+            if not title:
+                continue
+            total_titles += 1
+            title_lower = title.lower()
+            direction = _direction(title, title_lower)
+            for display, meta in keyword_meta.items():
+                if any(_kw_hit(title, title_lower, raw) for raw in meta["raws"]):
+                    entry = stats[display]
+                    entry["mentions"] += 1
+                    entry["sources"].add(name)
+                    if direction > 0:
+                        entry["bull"] += 1
+                    elif direction < 0:
+                        entry["bear"] += 1
+                    entry["evidence"].append({
+                        "title": title,
+                        "source": name,
+                        "url": item.get("url") or "",
+                        "direction": direction,
+                        "time": item.get("time") or item.get("date") or "当日",
+                    })
+
+    # 3) 过滤零命中
+    active = [v for v in stats.values() if v["mentions"] > 0]
+    if not active:
+        return {
+            "keywords": [],
+            "total_hit": 0,
+            "total_mentions": 0,
+            "total_signals": 0,
+            "overall_bias": "中性",
+            "top_opportunity": [],
+            "top_pressure": [],
+            "headline": "当日样本中暂无关键词命中（投资主线词库均未命中），热力图等待数据刷新，不做无依据推演。",
+            "indicators": _HEATMAP_INDICATORS,
+            "note": "热力图基于投资主线词库（AI/光通信/半导体/贵金属/汇率等）按标题命中统计，零命中时不展示热力。",
+        }
+
+    # 4) 热度归一
+    raw_heats = []
+    for entry in active:
+        raw = entry["mentions"] * (1 + math.log1p(len(entry["sources"])) )
+        raw_heats.append(raw)
+        entry["_raw"] = raw
+    max_raw = max(raw_heats) if raw_heats else 1
+
+    keywords = []
+    total_signals = 0
+    total_mentions = 0
+    bull_all = bear_all = 0
+    for entry in active:
+        sources_cnt = len(entry["sources"])
+        mentions = entry["mentions"]
+        bull = entry["bull"]
+        bear = entry["bear"]
+        signals = bull + bear
+        net = bull - bear
+        total_mentions += mentions
+        total_signals += signals
+        bull_all += bull
+        bear_all += bear
+        sentiment = round((bull - bear) / signals, 3) if signals else 0.0
+        heat = int(round(entry["_raw"] / max_raw * 100)) if max_raw else 0
+        heat_level = _heatmap_level(heat)
+        sentiment_label = _heatmap_sentiment_label(sentiment, signals)
+        divergence = round(1 - abs(sentiment), 3) if signals >= 2 else 0.0
+        burst = round(heat * abs(sentiment), 1)
+        flow = _heatmap_flow(sentiment, heat)
+        risk = _heatmap_risk(sentiment, divergence, heat)
+        confidence = _heatmap_confidence(sources_cnt, mentions)
+        rating = _heatmap_rating(sentiment, heat, net, signals)
+        tag = entry["tag"]
+        display = entry["keyword"]
+        concept = _HEATMAP_STOCK_MAP.get(display) or tag
+        hint = _heatmap_hint(tag, sentiment_label)
+        # 证据：方向一致优先，同源同题去重，保留 3 条
+        want = 1 if sentiment > 0 else (-1 if sentiment < 0 else 0)
+        ev_sorted = sorted(entry["evidence"], key=lambda e: 0 if e["direction"] == want else (1 if e["direction"] == 0 else 2))
+        seen_ev, evidence = set(), []
+        for ev in ev_sorted:
+            key = (ev["source"], ev["title"])
+            if key in seen_ev:
+                continue
+            seen_ev.add(key)
+            evidence.append({k: ev[k] for k in ("title", "source", "url", "direction", "time")})
+            if len(evidence) >= 3:
+                break
+        # 关联政策维度：由证据标题的政策标签聚合
+        policy_tags = []
+        seen_pt = set()
+        for ev in evidence:
+            for pt in _policy_tags(_policy_norm(ev["title"])):
+                if pt not in seen_pt:
+                    seen_pt.add(pt)
+                    policy_tags.append(pt)
+        reading = f"{display}（{tag}｜{concept}）{heat_level}·热度{heat}｜情绪{sentiment_label}（净{net:+d}｜{sources_cnt}源·{mentions}条｜信号{bull}:{bear}）｜{flow}｜{rating}｜风险{risk}·置信度{confidence}。提示：{hint}。"
+        keywords.append({
+            "keyword": display,
+            "display": display,
+            "tag": tag,
+            "concept": concept,
+            "mentions": mentions,
+            "sources": sources_cnt,
+            "bull": bull,
+            "bear": bear,
+            "net": net,
+            "signals": signals,
+            "sentiment": sentiment,
+            "sentiment_label": sentiment_label,
+            "heat": heat,
+            "heat_raw": round(entry["_raw"], 3),
+            "heat_level": heat_level,
+            "divergence": divergence,
+            "burst": burst,
+            "flow": flow,
+            "risk": risk,
+            "confidence": confidence,
+            "rating": rating,
+            "hint": hint,
+            "reading": reading,
+            "evidence": evidence,
+            "policy_tags": policy_tags[:3],
+        })
+
+    # 排序：热度降序，其次爆发系数，其次提及数
+    keywords.sort(key=lambda x: (x["heat"], x["burst"], x["mentions"]), reverse=True)
+    if top_n and len(keywords) > top_n:
+        keywords = keywords[:top_n]
+
+    # 整体偏向
+    if bull_all + bear_all > 0:
+        overall_sent = (bull_all - bear_all) / (bull_all + bear_all)
+        if overall_sent >= 0.2:
+            overall_bias = "偏多"
+        elif overall_sent <= -0.2:
+            overall_bias = "偏空"
+        else:
+            overall_bias = "中性"
+    else:
+        overall_bias = "中性"
+
+    # Top 机会/承压：按 burst 排序
+    top_opportunity = sorted([k for k in keywords if k["sentiment"] > 0.2 and k["heat"] >= 30], key=lambda x: x["burst"], reverse=True)[:3]
+    top_pressure = sorted([k for k in keywords if k["sentiment"] < -0.2 and k["heat"] >= 30], key=lambda x: x["burst"], reverse=True)[:3]
+    # 若无，也取热度最高的偏多/偏空中性填补，避免空
+    if not top_opportunity:
+        top_opportunity = [k for k in keywords if k["sentiment"] >= 0][:1]
+    if not top_pressure:
+        top_pressure = [k for k in keywords if k["sentiment"] < 0][:1]
+
+    # 总结句
+    if keywords:
+        top_kw = keywords[0]
+        burst_kw = max(keywords, key=lambda x: x["burst"]) if keywords else None
+        headline = f"情绪热力图：{len(keywords)} 个投资关键词命中（{total_mentions} 条线索·{total_titles} 篇标题），整体{overall_bias}；" 
+        headline += f"最热「{top_kw['keyword']}」{top_kw['heat_level']}·热度{top_kw['heat']}（{top_kw['sentiment_label']}·净{top_kw['net']:+d}·{top_kw['sources']}源共振），"
+        if burst_kw and burst_kw["keyword"] != top_kw["keyword"]:
+            headline += f"爆发系数最高「{burst_kw['keyword']}」{burst_kw['burst']:.1f}（{burst_kw['rating']}），"
+        if top_opportunity:
+            headline += f"机会：{'、'.join(k['keyword'] for k in top_opportunity[:2])}；"
+        if top_pressure:
+            headline += f"承压：{'、'.join(k['keyword'] for k in top_pressure[:2])}；"
+        headline += "热度>75 为沸腾需防拥挤，跨源≥4 为确认信号；仅统计信号，不作为投资依据。"
+    else:
+        headline = "暂无关键词命中。"
+
+    return {
+        "keywords": keywords,
+        "total_hit": len(keywords),
+        "total_mentions": total_mentions,
+        "total_signals": total_signals,
+        "total_titles": total_titles,
+        "overall_bias": overall_bias,
+        "bull_all": bull_all,
+        "bear_all": bear_all,
+        "top_opportunity": top_opportunity,
+        "top_pressure": top_pressure,
+        "headline": headline,
+        "indicators": _HEATMAP_INDICATORS,
+        "note": "指标口径：热度=提及×(1+ln(跨源+1))归一；情绪=(多-空)/信号；爆发=热度×|情绪|；分歧=1-|情绪|；资金倾向由情绪与热度推断。证据为命中该关键词的原标题，仅供参考。",
     }
 
 
@@ -4457,11 +4862,146 @@ def build_html(
         f'与「AI 每日总结」「AI 板块机会」共用同一批抓取标题</div></div>'
     )
 
+    # ── 「AI 情绪热力图」卡片：关键词级热度与情绪（面向股市投资）
+    #    每个关键词为一个格子，含 9 维投资指标（热度/情绪/共振/分歧/爆发/资金倾向/评级/风险/置信度），
+    #    点格子可下钻看新闻线索（标题/来源/情绪标签）；推送版以表格呈现热力网格与 Top 线索。
+    heatmap = analysis.get("heatmap") or {}
+
+    def _heatmap_badge(text: str, kind: str = "") -> str:
+        cls = "tag"
+        if kind == "hot":
+            cls = "tag"
+        elif kind == "warn":
+            cls = "tag-d"
+        elif kind == "neutral":
+            cls = "tag-w"
+        return f'<span class="{cls}">{_esc(text)}</span>'
+
+    def _render_heatmap(level: int) -> str:
+        if not heatmap or not (heatmap.get("keywords") or []):
+            headline_hm = _esc(heatmap.get("headline") or "当日样本中暂无关键词命中，热力图等待数据刷新。")
+            return (
+                f'<div class="card"><div class="hdr"><span class="tag">AI 情绪热力图</span>'
+                f'<span class="sub">关键词级线索 · 投资级指标</span></div>'
+                f'<div class="txt">{headline_hm}</div>'
+                f'<div class="ftr">每个格子=一个投资关键词，热度=提及×(1+ln(跨源+1))归一；情绪=(多-空)/信号；爆发=热度×|情绪|。仅统计信号，不作为投资依据。</div></div>'
+            )
+        headline_hm = _esc(heatmap.get("headline") or "")
+        total_hit = heatmap.get("total_hit", 0)
+        overall_bias = heatmap.get("overall_bias", "中性")
+        bias_cls = "tag" if overall_bias == "偏多" else ("tag-d" if overall_bias == "偏空" else "tag-w")
+        total_mentions = heatmap.get("total_mentions", 0)
+        total_signals = heatmap.get("total_signals", 0)
+        keywords = heatmap.get("keywords") or []
+        # level 2 展示 24 个，level 1 展示 12 个，level 0 仅展示 Top 4 摘要（极简，确保免费口径 19,500 字符内仍能发得出去）
+        if level <= 0:
+            # 极简模式：只保留 headline + Top 4 关键词一行摘要，不渲染网格与指标大表（节省 ~6k 字符）
+            top4 = keywords[:4]
+            top_line = "、".join(f'{_esc(k.get("keyword") or "")}{k.get("heat_level") or ""}·{k.get("heat",0)}（{_esc(k.get("sentiment_label") or "")}）' for k in top4)
+            return (
+                f'<div class="card"><div class="hdr"><span class="tag">AI 情绪热力图</span>'
+                f'<span class="sub">{total_hit} 个关键词 · {total_mentions} 条线索</span></div>'
+                f'<div class="txt">{headline_hm}</div>'
+                f'<div style="margin:6px 0;color:{ink};font-size:11px;"><span class="{bias_cls}">{_esc(overall_bias)}</span> '
+                f'<span class="sub">Top 4：{top_line}</span></div>'
+                f'<div class="ftr">完整热力网格（{total_hit} 词 × 9 维指标 + 新闻线索）在 <span class="hl">/api/heatmap</span> 与页面可下钻；仅统计信号，不作为投资依据。</div></div>'
+            )
+        limit = 24 if level >= 2 else 12
+        shown = keywords[:limit]
+        # 热力网格：2 列排布（邮件表格），每个格子=关键词
+        rows = []
+        for idx in range(0, len(shown), 2):
+            pair = shown[idx:idx+2]
+            cells = []
+            for kw in pair:
+                # 左框颜色由情绪决定（偏多=绿，偏空=红，中性=灰）
+                border = neon_green if kw.get("sentiment_label") == "偏多" else (danger_hi if kw.get("sentiment_label") == "偏空" else black)
+                heat = kw.get("heat", 0)
+                heat_label = kw.get("heat_level", "")
+                sentiment_label = kw.get("sentiment_label", "中性")
+                rating = kw.get("rating", "")
+                flow = kw.get("flow", "观望")
+                risk = kw.get("risk", "低")
+                # 热度条宽度=heat%
+                bar_color = neon_green if kw.get("sentiment", 0) > 0.2 else (danger_hi if kw.get("sentiment", 0) < -0.2 else muted)
+                concept = _esc(kw.get("concept") or kw.get("tag") or "")
+                hint = _esc(kw.get("hint") or "")
+                # 证据（level>=2 才展示线索标题，level 1 仅计数）
+                ev_html = ""
+                if level >= 2:
+                    ev_list = kw.get("evidence") or []
+                    if ev_list:
+                        ev_html = "".join(
+                            f'<div class="ev">· {_esc(ev.get("source") or "")}｜{_esc(ev.get("time") or "当日")}｜{_hl(_trunc(str(ev.get("title") or ""), 44))} '
+                            f'<span style="color:{bar_color};">{"利好" if ev.get("direction")>0 else ("利空" if ev.get("direction")<0 else "中性")}</span></div>'
+                            for ev in ev_list[:2]
+                        )
+                    else:
+                        ev_html = '<div class="ev">暂无线索</div>'
+                else:
+                    ev_html = f'<div class="ev">{kw.get("sources",0)}源·{kw.get("mentions",0)}条｜信号 {kw.get("bull",0)}:{kw.get("bear",0)}</div>'
+                cell = (
+                    f'<td style="width:50%;vertical-align:top;padding:6px;border:1px solid {black};border-left:4px solid {border};background:{paper};">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;"><b style="font-size:12px;">{_esc(kw.get("keyword") or "")}</b>'
+                    f'<span style="color:{muted};font-size:10px;">{_esc(kw.get("tag") or "")}</span></div>'
+                    f'<div style="font-size:10px;color:{muted};margin-top:1px;">{concept}</div>'
+                    f'<div style="height:6px;background:#d6ddd4;border:1px solid {black};margin:5px 0;overflow:hidden;"><div style="height:100%;width:{heat}%;background:{bar_color};"></div></div>'
+                    f'<div style="font-size:10px;color:{ink};line-height:1.5;"><b>{_esc(heat_label)}</b>·热度<b>{heat}</b>｜情绪<b>{_esc(sentiment_label)}</b>（净{kw.get("net",0):+d}）｜{kw.get("sources",0)}源·{kw.get("mentions",0)}条</div>'
+                    f'<div style="margin-top:4px;">'
+                    f'<span style="font-size:10px;background:{black};color:{neon_green if rating.startswith("强多") or "偏多" in rating else (danger_hi if "偏空" in rating or "强空" in rating else "#fff")};padding:1px 4px;">{_esc(rating)}</span> '
+                    f'<span style="font-size:10px;background:{"#2a1210" if flow=="流出" else (neon_green if flow=="流入" else paper)};color:{"#ff8d7e" if flow=="流出" else (black if flow=="流入" else muted)};border:1px solid {black};padding:1px 4px;">{_esc(flow)}</span> '
+                    f'<span style="font-size:10px;background:{paper};border:1px solid {black};color:{muted};padding:1px 4px;">风险{_esc(risk)}</span>'
+                    f'</div>'
+                    f'{ev_html}'
+                    f'</td>'
+                )
+                cells.append(cell)
+            if len(cells) == 1:
+                cells.append(f'<td style="width:50%;padding:6px;"></td>')
+            rows.append(f'<tr>{"".join(cells)}</tr>')
+        # 指标说明（level>=1 全量，level 0 只列核心 4 个）
+        indicators = heatmap.get("indicators") or []
+        if level >= 1:
+            ind_rows = "".join(
+                f'<tr><td class="td-n">·</td><td class="td-t"><b>{_esc(ind.get("label") or "")}</b> '
+                f'<span class="sub">{_esc(ind.get("formula") or "")}</span> '
+                f'<span class="sub">· {_esc(ind.get("use") or "")}</span></td></tr>'
+                for ind in indicators
+            )
+        else:
+            core_keys = {"heat", "sentiment", "burst", "rating"}
+            ind_rows = "".join(
+                f'<tr><td class="td-n">·</td><td class="td-t"><b>{_esc(ind.get("label") or "")}</b> '
+                f'<span class="sub">{_esc(ind.get("formula") or "")}</span></td></tr>'
+                for ind in indicators if ind.get("key") in core_keys
+            )
+        # Top 机会/承压 快览（level>=1）
+        top_html = ""
+        if level >= 1 and (heatmap.get("top_opportunity") or heatmap.get("top_pressure")):
+            opp = heatmap.get("top_opportunity") or []
+            press = heatmap.get("top_pressure") or []
+            parts = []
+            if opp:
+                parts.append(f'<span class="tag">机会</span> {"、".join(_esc(k.get("keyword") or "") for k in opp[:3])}')
+            if press:
+                parts.append(f'<span class="tag-d">承压</span> {"、".join(_esc(k.get("keyword") or "") for k in press[:2])}')
+            if parts:
+                top_html = f'<div style="margin-top:6px;color:{ink};font-size:11px;">{"　".join(parts)}</div>'
+        return (
+            f'<div class="card"><div class="hdr"><span class="tag">AI 情绪热力图</span>'
+            f'<span class="sub">{total_hit} 个关键词 · {total_mentions} 条线索 · 信号 {total_signals} 条</span></div>'
+            f'<div class="txt">{headline_hm}</div>'
+            f'<div style="margin:6px 0;"><span class="{bias_cls}">{_esc(overall_bias)}</span> '
+            f'<span class="sub">{total_hit} 词命中 · {"跨源≥4为确认信号，1-2源为噪音" if level>=1 else ""}</span></div>'
+            f'{top_html}'
+            f'<table class="tbl" style="margin-top:6px;">{"".join(rows)}</table>'
+            f'<table class="tbl-sub" style="margin-top:8px;">'
+            f'<tr><td colspan="2" class="td-hdr"><span class="tag">投资级指标说明</span> <span class="sub">9 维量化 · 阈值写死可复算</span></td></tr>'
+            f'{ind_rows}</table>'
+            f'<div class="ftr">每个格子=一个投资关键词，热度深浅=关注度，颜色=情绪方向，点邮件仅展示Top线索·完整线索在页面 /api/heatmap 可下钻；{"热度>75为沸腾需防拥挤，" if level>=1 else ""}仅统计信号，不作为投资依据。</div></div>'
+        )
+
     # ── 「AI 政策深度」/「AI 政策研报」两张卡片：政策法规知识库检索（RAG）+ 修饰词术语口径 +
-    #    政策舆情情感打分 + 政策传导图谱 + 四步分析师推理链 + 思维导图 + LSTM / Prophet 式模型 +
-    #    结构化政策影响研报。位置紧跟「AI 政策分析」（即「AI 每日总结」之后、「AI 板块机会」之前）。
-    #    与快讯列表一样按容量口径分档渲染：level 2 全量 → level 1 精简（去掉思维导图与背景知识长文）
-    #    → level 0 整段省略，保证任何账号口径都发得出去。
     kb = policy.get("kb") or {}
     modifiers = policy.get("modifiers") or {}
     sentiment = policy.get("sentiment") or {}
@@ -4811,6 +5351,7 @@ def build_html(
                       else min(max_per_src, NEWS_ITEMS_PER_SOURCE))
         policy_deep_cards = ((_render_policy_deep(deep_level) + _render_policy_research(deep_level))
                              if deep_level > 0 else "")
+        heatmap_card = _render_heatmap(deep_level)
         return (
             f'{css}<div class="bg">'
             f'<div class="card-m">'
@@ -4818,6 +5359,7 @@ def build_html(
             f'<div style="color:{neon_green};font-size:20px;font-weight:800;">章鱼 AI 全景分析</div>'
             f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内外数据，由多个大模型混合部署。</div></div>'
             f'<div class="card"><div class="hdr"><span class="tag">AI 每日总结</span></div><div class="txt">{headline}</div>{points_html}</div>'
+            + heatmap_card
             + policy_card
             + policy_deep_cards
             + opportunities_card

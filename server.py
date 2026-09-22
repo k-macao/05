@@ -115,6 +115,26 @@ class Handler(SimpleHTTPRequestHandler):
                 "bias": review.get("bias"),
                 "indices": review.get("indices"),
             })
+        if path == "/api/heatmap":
+            # 情绪热力图：关键词级热度与情绪（面向股市投资）
+            # 每个关键词含 热度/情绪/共振/分歧/爆发/资金倾向/评级/风险 等 9 维指标，
+            # 并可下钻查看提及该关键词的新闻线索（标题/来源/链接/情绪标签）。
+            try:
+                brief = get_brief()
+            except Exception as error:
+                return self.send_json(HTTPStatus.OK, {"error": str(error)})
+            # ?top=40 控制返回关键词数，默认 40；?brief=1 连同简报一起返回便于调试
+            qs = parse_qs(query)
+            try:
+                top_n = int((qs.get("top") or ["40"])[0])
+            except ValueError:
+                top_n = 40
+            top_n = max(1, min(top_n, 100))
+            heatmap = sources.analyze_keyword_heatmap(brief, top_n=top_n)
+            if (qs.get("brief") or [""])[0].strip().lower() in ("1", "true", "yes", "on"):
+                heatmap = dict(heatmap)
+                heatmap["brief"] = brief
+            return self.send_json(HTTPStatus.OK, heatmap)
         if path == "/api/policy":
             # 「AI 政策分析」深度层：政策维度统计 + 知识库检索 + 修饰词口径 + 舆情情感 +
             # 传导图谱 + 四步推理链 + 思维导图 + 政策影响研报 + LSTM / Prophet 式模型结果。

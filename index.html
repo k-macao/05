@@ -7,7 +7,7 @@
   <meta name="author" content="章鱼 ai" />
   <meta name="theme-color" content="#ecefea" />
   <title>章鱼 AI 全景分析</title>
-  <link rel="stylesheet" href="styles.css?v=20260920a" />
+  <link rel="stylesheet" href="styles.css?v=20260922" />
 </head>
 <body>
   <div class="crt-overlay" aria-hidden="true"></div>
@@ -90,6 +90,32 @@
           <span id="insightSource">基于五大板块 49 源境内外快讯（含政策发布 · 全球政经媒体 · 公民科技）</span>
           <button class="arrow-btn" id="expandBtn" aria-label="展开 AI 分析">↗</button>
         </div>
+      </article>
+    </section>
+
+    <section class="pixel-section" id="heatmapSection">
+      <div class="pixel-section-head">
+        <div><span class="kicker">AI HEATMAP</span><h2>AI 情绪热力图</h2></div>
+        <span class="ai-pill" id="heatmapPill">✦ 关键词级线索</span>
+      </div>
+      <article class="insight-card" id="heatmapCard">
+        <p class="policy-headline" id="heatmapHeadline">正在加载情绪热力图…</p>
+        <div class="heatmap-meta" id="heatmapMeta"></div>
+        <div class="heatmap-toolbar">
+          <div class="heatmap-filters" id="heatmapFilters" role="toolbar" aria-label="热力图筛选">
+            <button class="pixel-text-btn active" data-filter="all" aria-pressed="true">全部</button>
+            <button class="pixel-text-btn" data-filter="机会" aria-pressed="false">机会</button>
+            <button class="pixel-text-btn" data-filter="承压" aria-pressed="false">承压</button>
+            <button class="pixel-text-btn" data-filter="偏多" aria-pressed="false">偏多</button>
+            <button class="pixel-text-btn" data-filter="偏空" aria-pressed="false">偏空</button>
+            <button class="pixel-text-btn" data-filter="沸腾" aria-pressed="false">沸腾</button>
+          </div>
+          <span class="heatmap-count" id="heatmapCount"></span>
+        </div>
+        <div class="heatmap-grid" id="heatmapGrid" aria-live="polite"></div>
+        <div class="heatmap-indicators" id="heatmapIndicators"></div>
+        <div class="heatmap-drawer" id="heatmapDrawer" hidden></div>
+        <div class="insight-foot"><span id="heatmapFoot">每个格子=一个投资关键词，颜色深浅=热度，点格子看新闻线索（标题/来源/情绪）· 仅统计信号，不构成投资建议</span></div>
       </article>
     </section>
 
@@ -353,6 +379,6 @@
   </main>
 
   <div class="toast" id="toast">正在生成今日简报…</div>
-  <script src="app.js?v=20260831"></script>
+  <script src="app.js?v=20260922"></script>
 </body>
 </html>
