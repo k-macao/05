@@ -15,6 +15,9 @@
   --gray-light: #c4c4c2;
   --gray-dark: #3a3a3a;
   --rule: #b8b8b6;
+  /* 文字色阶：浅底两级（ink / ink-soft），深底两级（on-dark / on-dark-soft） */
+  --on-dark: #ffffff;
+  --on-dark-soft: #bdbdbd;
   --shadow: #0a0a0a;
   --body-font: Arial, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
 }
@@ -44,7 +47,7 @@ body {
 }
 
 img, video, canvas { filter: grayscale(1) contrast(1.15); }
-::selection { background: var(--black); color: #fff; }
+::selection { background: var(--black); color: var(--on-dark); }
 
 button { font: inherit; }
 button:focus-visible,
@@ -210,13 +213,13 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
   margin-bottom: 13px;
   background: var(--black);
   border-left: 4px solid var(--green);
-  color: #fff;
+  color: var(--on-dark);
   font-size: 11px;
 }
 
 .pixel-panel span:first-child { color: var(--green); font-weight: 800; }
-.pixel-panel strong { color: #fff; font-size: 14px; }
-.pixel-panel span:last-child { color: #cfcfcf; }
+.pixel-panel strong { color: var(--on-dark); font-size: 14px; }
+.pixel-panel span:last-child { color: var(--on-dark-soft); }
 
 /* Report sections */
 .pixel-section {
@@ -321,7 +324,7 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
   margin-top: 11px;
   background: var(--black);
   border: 1px solid var(--black);
-  color: #fff;
+  color: var(--on-dark);
   cursor: pointer;
   font-size: 12px;
   font-weight: 800;
@@ -332,7 +335,7 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 .run-btn:active { transform: translate(2px, 2px); }
 .run-btn:disabled { cursor: wait; opacity: .65; }
 .play { font-size: 11px; }
-.run-state { color: #cfcfcf; font-size: 10px; font-weight: 400; }
+.run-state { color: var(--on-dark-soft); font-size: 10px; font-weight: 400; }
 
 /* Insight */
 .insight-card {
@@ -402,7 +405,7 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 
 .review-index b {
   display: block;
-  color: #9a9a9a;
+  color: var(--on-dark-soft);
   font-size: 10px;
   font-weight: 400;
   line-height: 1.5;
@@ -419,12 +422,12 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 }
 
 .review-index em.up { color: var(--green); }
-.review-index em.down { color: #bdbdbd; text-decoration: underline; text-underline-offset: 2px; }
-.review-index em.flat { color: #fff; }
+.review-index em.down { color: var(--on-dark-soft); }
+.review-index em.flat { color: var(--on-dark); }
 
 .review-index small {
   display: block;
-  color: #fff;
+  color: var(--on-dark);
   font-size: 10px;
   line-height: 1.5;
   white-space: nowrap;
@@ -538,10 +541,10 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
   white-space: nowrap;
 }
 
-.sector-points .group-label.press { color: #bdbdbd; }
-.sector-points .point-label.press { color: #bdbdbd; }
+.sector-points .group-label.press { color: var(--on-dark-soft); }
+.sector-points .point-label.press { color: var(--on-dark-soft); }
 .sector-points .group-note { color: var(--ink-soft); font-size: 10px; line-height: 1.6; }
-.sector-points mark.press { background: var(--gray-dark); color: #bdbdbd; }
+.sector-points mark.press { background: var(--gray-dark); color: var(--on-dark); }
 .sector-points .sector-stat { color: var(--ink-soft); font-size: 10px; font-weight: 400; margin-left: 6px; }
 
 .sector-evidence {
@@ -573,7 +576,7 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
   font-weight: 700;
 }
 
-.policy-headline mark.press { background: var(--gray-dark); color: #bdbdbd; }
+.policy-headline mark.press { background: var(--gray-dark); color: var(--on-dark); }
 
 .stance-tag {
   display: inline-block;
@@ -585,8 +588,8 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
   font-weight: 400;
 }
 
-.stance-tag.hawk { border-color: var(--gray); color: #bdbdbd; }
-.stance-tag.dove { border-color: #444444; color: var(--green-deep); }
+.stance-tag.hawk { border-color: var(--ink); background: var(--gray-light); color: var(--ink); }
+.stance-tag.dove { border-color: var(--ink); color: var(--ink); }
 
 /* AI 政策深度：近30日全球政策 → 三市影响 */
 .impact-board {
@@ -622,7 +625,7 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
   line-height: 1.2;
 }
 
-.impact-cell.press .impact-bias { color: var(--gray-dark); }
+.impact-cell.press .impact-bias { color: var(--ink); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .impact-cell .impact-score { color: var(--ink-soft); font-size: 10px; }
 .impact-cell .impact-split {
   margin-top: 4px;
@@ -817,9 +820,9 @@ footer strong { display: block; color: var(--ink); text-align: center; font-size
   white-space: nowrap;
 }
 .badge.hot { background: var(--black); color: var(--green); }
-.badge.warn { background: var(--gray-dark); color: #bdbdbd; }
+.badge.warn { background: var(--gray-dark); color: var(--on-dark); }
 .badge.neutral { background: var(--paper); color: var(--ink-soft); }
-.badge.flow-in { background: var(--black); color: #fff; }
+.badge.flow-in { background: var(--black); color: var(--on-dark); }
 .badge.flow-out { background: var(--gray-light); color: var(--black); }
 .cell-reading {
   margin-top: 6px;
