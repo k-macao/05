@@ -136,9 +136,9 @@ class Handler(SimpleHTTPRequestHandler):
                 heatmap["brief"] = brief
             return self.send_json(HTTPStatus.OK, heatmap)
         if path == "/api/policy":
-            # 「AI 政策分析」深度层：政策维度统计 + 知识库检索 + 修饰词口径 + 舆情情感 +
-            # 传导图谱 + 四步推理链 + 思维导图 + 政策影响研报 + LSTM / Prophet 式模型结果。
-            # 走 /api/brief 同一份缓存；?deep=0 只要基础统计（更快）。
+            # 「AI 政策分析」：政策维度统计 + 近30日全球政策对股市的影响。
+            # deep=1 再叠加知识库检索、修饰词、舆情、传导图谱、推理链、研报和 LSTM / Prophet。
+            # ?deep=0 不跑模型，但仍返回 market_impact。走 /api/brief 同一份缓存。
             deep = (parse_qs(query).get("deep") or ["1"])[0].strip().lower() not in ("0", "false", "no")
             try:
                 brief = get_brief()

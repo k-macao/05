@@ -575,6 +575,56 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 }
 
 .stance-tag.hawk { border-color: #6e332b; color: #ff8d7e; }
+.stance-tag.dove { border-color: #3d463b; color: var(--green-deep); }
+
+/* AI 政策深度：近30日全球政策 → 三市影响 */
+.impact-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0 2px;
+}
+
+.impact-cell {
+  min-width: 0;
+  padding: 7px 8px 6px;
+  background: var(--paper);
+  border: 1px solid var(--black);
+  border-top: 3px solid var(--green);
+}
+
+.impact-cell.press { border-top-color: #ff6b5c; }
+.impact-cell.neutral { border-top-color: var(--black); }
+
+.impact-cell .impact-name {
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.impact-cell .impact-bias {
+  margin: 2px 0 3px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.impact-cell.press .impact-bias { color: #9c2f24; }
+.impact-cell .impact-score { color: var(--ink-soft); font-size: 10px; }
+.impact-cell .impact-split {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.impact-cell .impact-split b { font-weight: 700; }
+
+@media (max-width: 640px) {
+  .impact-board { grid-template-columns: 1fr; }
+}
 
 /* AI 政策研报卡片：思维导图树（根节点 + 分支 + 子节点），与简报的缩进树同口径 */
 .mm-root {
