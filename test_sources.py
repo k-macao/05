@@ -603,6 +603,7 @@ class PolicySectionTest(unittest.TestCase):
         self.assertEqual(p["stance"], "中性")
         self.assertIn("暂无政策面信号", p["headline"])
         self.assertNotIn("偏鹰", p["headline"])
+        self.assertEqual(p["headline"].count("。"), 1)
 
     def test_demo_brief_has_policy_content(self):
         brief = {name: sources._demo_items(name) for name in sources.SOURCES}
@@ -610,6 +611,7 @@ class PolicySectionTest(unittest.TestCase):
         self.assertTrue(p["buckets"])
         self.assertTrue(p["headline"])
         self.assertLessEqual(len(p["headline"]), 200)
+        self.assertEqual(p["headline"].count("。"), 1)  # 对外政策总结只用一句话
 
     def test_analyze_brief_exposes_policy(self):
         ana = sources.analyze_brief(self._brief(["美联储加息"]))
@@ -1081,11 +1083,19 @@ class PolicyDeepWiringTest(unittest.TestCase):
     def test_build_html_renders_deep_layer_blocks(self):
         brief = {name: sources._demo_items(name) for name in sources.SOURCES}
         out = sources.build_html(brief, **self._kanpan())
-        for token in ("政策法规知识库检索", "LLM 对比分析", "政策术语口径（修饰词解读）", "政策舆情情感打分",
+        for token in ("政策法规知识库检索", "政策术语口径（修饰词解读）", "政策舆情情感打分",
                       "政策传导图谱", "分析师推理链", "政策影响思维导图", "LSTM · 中长期走势节奏",
                       "Prophet 式分解 · 剥离季节看政策窗口", "政策影响研报（结构化结论）",
                       "长远冲击", "风险提示", "政策窗口期"):
             self.assertIn(token, out)
+        for hidden in ("关键表述：", "背景知识：", "历史市场含义：", "LLM 对比分析"):
+            self.assertNotIn(hidden, out)
+        term_start = out.index("政策术语口径（修饰词解读）")
+        term_end = out.index("政策舆情情感打分", term_start)
+        term_block = out[term_start:term_end]
+        self.assertEqual(term_block.count("加权强度"), 1)
+        self.assertNotIn("市场含义", term_block)
+        self.assertNotIn("法律含义", term_block)
         # 宏观背景 → 行业限制 → 资金流向 → 受益板块 四步齐全且顺序正确
         steps = [out.index(f'<span class="tag">{label}</span>')
                  for label in ("宏观背景", "行业限制", "资金流向", "受益板块")]

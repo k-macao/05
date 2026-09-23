@@ -2130,8 +2130,8 @@ def _compose_policy_headline(data: dict) -> str:
     if data["signals"]:
         parts.append(f"政策面多空 {data['bull']} : {data['bear']}")
     summary = (f"政策面集中在「{names}」（{data['sources_hit']} 源命中 · {data['mentions']} 条提及），"
-               + "；".join(parts) + "。")
-    return summary + "建议关注政策信号的「转向确认」，而非单边押注。"
+               + "；".join(parts))
+    return summary + "；建议关注政策信号的「转向确认」，避免单边押注。"
 
 
 # ================================================================ 「AI 政策分析」深度层
@@ -2622,15 +2622,13 @@ def analyze_policy_sentiment(brief: dict) -> dict:
             window = {
                 "label": f"政策窗口期 · 预期差（官媒口径{official['label']} / 市场解读{market['label']}）",
                 "note": (f"官媒口径情绪 {official['score']:+.2f} 高于市场化解读 {market['score']:+.2f}"
-                         f"（差 {gap:+.2f}）。历史上此类分歧常在政策细则落地前后收敛，是政策窗口期观察点；"
-                         "属统计信号，仅供参考、不作为投资依据。"),
+                         f"（差 {gap:+.2f}）；该差值为统计信号，仅供参考、不作为投资依据。"),
             }
         else:
             window = {
                 "label": f"政策窗口期 · 预期差（市场解读{market['label']} / 官媒口径{official['label']}）",
                 "note": (f"市场化解读情绪 {market['score']:+.2f} 高于官媒口径 {official['score']:+.2f}"
-                         f"（差 {gap:+.2f}）。情绪先行于官方口径时需防政策口径回摆，注意兑现风险；"
-                         "属统计信号，仅供参考、不作为投资依据。"),
+                         f"（差 {gap:+.2f}）；该差值为统计信号，仅供参考、不作为投资依据。"),
             }
     elif overall["label"] == "正向":
         window = {"label": "情绪加速期", "note": "官媒与市场解读同向偏正，注意政策落地后的兑现与追高风险。"}
@@ -2789,27 +2787,21 @@ def analyze_policy_reasoning(policy: dict, kb: dict | None = None, sentiment: di
     top_names = "、".join(_policy_short(tag) for tag, _, _ in (policy.get("top_themes") or [])[:3]) or "无"
     hits = kb.get("hits") or []
     chains = graph.get("chains") or []
-    mod_hits = modifiers.get("hits") or []
 
     # ① 宏观背景
     macro_bits = [f"政策面热度集中在「{top_names}」（{policy.get('sources_hit', 0)} 源命中 · "
                   f"{policy.get('mentions', 0)} 条提及）", f"取向{stance}（鹰派 {policy.get('hawk', 0)} : "
                                                           f"鸽派 {policy.get('dove', 0)}）"]
-    if mod_hits:
-        macro_bits.append("术语口径：" + "、".join(f"「{m['word']}」{m['market']}" for m in mod_hits[:2]))
-    if hits:
-        macro_bits.append(f"历史背景：{hits[0]['date']} {hits[0]['issuer']}「{hits[0]['phrase']}」")
+    if modifiers.get("hits"):
+        macro_bits.append(f"术语口径{modifiers.get('bias', '中性')}（加权强度 {modifiers.get('score', 0):+.2f}）")
     macro = {"key": "macro", "label": "宏观背景", "text": "；".join(macro_bits) + "。"}
 
-    # ② 行业限制（收紧 / 管制类维度 + 知识库里的制度约束）
+    # ② 行业限制（只按当日收紧 / 管制类净空维度归纳）
     limited = [b for b in buckets if b["net"] < 0][:3]
-    constraint_refs = [h for h in hits if h["dimension"] in {b["tag"] for b in limited}]
     if limited:
         industry_text = ("受限方向：" + "、".join(
             f"{_policy_short(b['tag'])}（政策净空 {-b['net']} · {b['stance']}）" for b in limited))
-        if constraint_refs:
-            industry_text += (f"；制度约束参照 {constraint_refs[0]['date']}《{constraint_refs[0]['title']}》："
-                              f"{constraint_refs[0]['market_effect'].rstrip('。')}")
+        # 只保留当日政策净空维度，不在用户可见推理链中展开知识库背景或历史市场含义。
     else:
         industry_text = "当日样本中未见明确收紧 / 管制类政策信号，行业限制维度证据不足"
     industry = {"key": "industry", "label": "行业限制", "text": industry_text + "。"}
@@ -2874,12 +2866,12 @@ def policy_mindmap(policy: dict, reasoning: dict, kb: dict, sentiment: dict, gra
     """②结构化输出：政策影响思维导图（根节点 = 当日政策主线，分支 = 分析维度）。"""
     top = _policy_short(policy["top_themes"][0][0]) if policy.get("top_themes") else "当日无政策信号"
     steps = {s["key"]: s["text"] for s in (reasoning or {}).get("steps", [])}
-    modifier_nodes = [f"「{m['word']}」{m['sense']} → {m['market']}"
-                      for m in ((modifiers or {}).get("hits") or [])[:3]]
-    kb_nodes = [f"{h['date']} {h['issuer']}「{h['phrase']}」" for h in (kb or {}).get("hits", [])[:2]]
+    modifier_nodes = ([f"修饰词口径{(modifiers or {}).get('bias', '中性')}（加权强度 "
+                       f"{(modifiers or {}).get('score', 0):+.2f}）"]
+                      if (modifiers or {}).get("hits") else [])
     branches = [
         {"label": "宏观背景", "children": _mm_split(steps.get("macro", "—"))},
-        {"label": "政策工具与术语口径", "children": modifier_nodes + kb_nodes or [
+        {"label": "政策工具与术语口径", "children": modifier_nodes or [
             f"取向：{policy.get('stance', '中性')}（鹰派 {policy.get('hawk', 0)} : 鸽派 {policy.get('dove', 0)}）"]},
         {"label": "行业限制", "children": _mm_split(steps.get("industry", "—"))},
         {"label": "资金流向", "children": _mm_split(steps.get("flow", "—"))},
@@ -2951,8 +2943,7 @@ def policy_research_note(policy: dict, reasoning: dict, kb: dict, graph: dict, s
         "horizon": "短期 1-4 周 · 中期 1-6 个月 · 长期 6-36 个月",
         "abstract": (f"当日政策面覆盖 {policy.get('sources_hit', 0)} 个数据源、{policy.get('mentions', 0)} 条提及，"
                      f"取向{stance}（鹰派 {policy.get('hawk', 0)} : 鸽派 {policy.get('dove', 0)}），"
-                     f"政策面多空 {bull} : {bear}。{(kb.get('hits') or [{}])[0].get('date', '')} "
-                     f"的历史政策条目提供背景对照，结论评级：{rating}。"),
+                     f"政策面多空 {bull} : {bear}，结论评级：{rating}。"),
         "steps": reasoning.get("steps", []),
         "beneficiaries": list(dict.fromkeys(
             industry for c in (graph or {}).get("chains", []) if c["direction"] == "净多"
@@ -5009,6 +5000,18 @@ def build_html(
     def _empty_row(text: str) -> str:
         return f'<tr><td colspan="2" class="sub" style="padding:6px 0;">{_esc(text)}</td></tr>'
 
+    def _modifier_summary() -> str:
+        """Brief-safe policy-term output: one aggregate sentence, without per-term implications."""
+        hits = modifiers.get("all") or modifiers.get("hits") or []
+        if not hits:
+            return "未命中政策修饰词，术语口径不作判断。"
+        try:
+            score = float(modifiers.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        bias = modifiers.get("bias") or "中性"
+        return f"修饰词口径{bias}（加权强度 {score:+.2f}，命中 {len(hits)} 项）。"
+
     def _render_policy_deep(level: int) -> str:
         """「AI 政策深度」卡片：知识库检索（RAG）→ 术语口径 → 舆情情感 → 传导图谱 → 分析师推理链。"""
         rows = [_deep_hdr("政策法规知识库检索", kb.get("note") or "先检索历史政策，再做对比分析")]
@@ -5018,33 +5021,12 @@ def build_html(
                 f'<div><span class="tag">{_esc(hit["date"])}</span> '
                 f'<span class="tag-w">{_esc(hit["issuer"])}</span> '
                 f'<span class="sub">{_esc(hit["doctype"])} · 匹配度 {hit["score"]} · {_esc(hit["dimension"])}</span></div>'
-                f'<div>{_esc(hit["title"])}</div>'
-                f'<div class="ev">关键表述：「{_esc(hit["phrase"])}」｜检索依据：{_esc(hit["why"])}</div>'
-                + (f'<div class="ev">背景知识：{_trunc(hit["summary"], 96)}</div>'
-                   f'<div class="ev">历史市场含义：{_trunc(hit["market_effect"], 96)}</div>' if level > 1 else "")
-                + '</td></tr>'
+                f'<div>{_esc(hit["title"])}</div></td></tr>'
             )
         if not (kb.get("hits") or []):
             rows.append(_empty_row(kb.get("note") or "当日无政策维度命中，知识库检索未启动。"))
-        for index, text in enumerate((kb.get("comparison") or [])[:2 if level > 1 else 1], 1):
-            rows.append(f'<tr><td class="td-n">＋{index}</td>'
-                        f'<td class="td-t"><span class="sub">LLM 对比分析</span> '
-                        f'{_esc(text if level > 1 else _trunc(text, 110))}</td></tr>')
 
-        rows.append(_deep_hdr("政策术语口径（修饰词解读）",
-                              (modifiers.get("reading") or "")[:80] or "经济学 + 法学双维口径"))
-        for item in (modifiers.get("hits") or [])[:4 if level > 1 else 2]:
-            legal = f'｜法律含义：{_esc(item["legal"])}' if (item.get("legal") and level > 1) else ""
-            cls = "tag-d" if item["strength"] < 0 else "tag"
-            rows.append(
-                f'<tr><td class="td-n">·</td><td class="td-t">'
-                f'<div><span class="{cls}">「{_esc(item["word"])}」</span> '
-                f'<span class="sub">{_esc(item["sense"])} · 强度 {item["strength"]:+.1f} · '
-                f'命中 {item["count"]} 次</span></div>'
-                f'<div class="ev">市场含义：{_esc(item["market"])}{legal}</div></td></tr>'
-            )
-        if not (modifiers.get("hits") or []):
-            rows.append(_empty_row(modifiers.get("reading") or "未命中政策修饰词。"))
+        rows.append(_deep_hdr("政策术语口径（修饰词解读）", _modifier_summary()))
 
         overall = sentiment.get("overall") or {}
         official = sentiment.get("official") or {}
@@ -5102,9 +5084,8 @@ def build_html(
             f'<span class="sub">知识库 {len(kb.get("hits") or [])} 条命中 · 推理链 '
             f'{len(reasoning.get("steps") or [])} 步 · 传导链 {len(graph.get("chains") or [])} 条</span></div>'
             f'<table class="tbl-sub">{"".join(rows)}</table>'
-            f'<div class="ftr">政策法规库（央行报告 / 财政部文件 / 监管规章 / 境外央行决议）外掛为知识库：'
-            f'解读新政策时先检索关联历史政策与背景知识，再交由模型做对比分析；修饰词按经济学 + 法学口径解读，'
-            f'政策舆情按正向 / 中性 / 负向即时打分。数据仅供参考。</div></div>'
+            f'<div class="ftr">政策知识库用于辅助政策主题匹配；术语口径仅展示汇总判断，政策舆情按正向 / 中性 / 负向即时打分。'
+            f'数据仅供参考。</div></div>'
         )
 
     def _render_policy_research(level: int) -> str:
