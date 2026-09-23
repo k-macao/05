@@ -4719,15 +4719,15 @@ def build_html(
     if max_length is None:
         max_length = quota_max_length
 
-    # E-ink editorial palette: paper first, ink second, green only for emphasis.
-    neon_green = "#b7ff00"
-    ink = "#111311"
-    black = "#0a0c0a"
-    paper = "#ecefea"
-    paper_lift = "#f7f8f5"
-    muted = "#626a61"
-    rule = "#c8cec5"
-    danger_hi = "#ff6b5c"    # 黑底上的下跌强调色
+    # E-ink palette (black / white / grey only): paper, ink, white on black for emphasis.
+    neon_green = "#ffffff"   # 深底上的高亮（白）
+    ink = "#111111"
+    black = "#0a0a0a"
+    paper = "#e4e4e2"
+    paper_lift = "#f1f1ef"
+    muted = "#555555"
+    rule = "#b8b8b6"
+    danger_hi = "#bdbdbd"    # 黑底上的下跌（浅灰）
     analysis = analyze_brief(brief)
     hl_tags = list(dict.fromkeys(
         analysis["sectors"] + analysis["sectors_up"] + analysis["sectors_down"]
@@ -4912,7 +4912,7 @@ def build_html(
             cells = []
             for kw in pair:
                 # 左框颜色由情绪决定（偏多=绿，偏空=红，中性=灰）
-                border = neon_green if kw.get("sentiment_label") == "偏多" else (danger_hi if kw.get("sentiment_label") == "偏空" else black)
+                border = black if kw.get("sentiment_label") == "偏多" else ("#8a8a8a" if kw.get("sentiment_label") == "偏空" else "#c4c4c2")
                 heat = kw.get("heat", 0)
                 heat_label = kw.get("heat_level", "")
                 sentiment_label = kw.get("sentiment_label", "中性")
@@ -4920,7 +4920,7 @@ def build_html(
                 flow = kw.get("flow", "观望")
                 risk = kw.get("risk", "低")
                 # 热度条宽度=heat%
-                bar_color = neon_green if kw.get("sentiment", 0) > 0.2 else (danger_hi if kw.get("sentiment", 0) < -0.2 else muted)
+                bar_color = black if kw.get("sentiment", 0) > 0.2 else ("#8a8a8a" if kw.get("sentiment", 0) < -0.2 else "#c4c4c2")
                 concept = _esc(kw.get("concept") or kw.get("tag") or "")
                 hint = _esc(kw.get("hint") or "")
                 # 线索列表不展示：格子只保留信号计数（标题/来源/时间“当日”/情绪标签 利好/利空/中性 不再列出）
@@ -4930,11 +4930,11 @@ def build_html(
                     f'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;"><b style="font-size:12px;">{_esc(kw.get("keyword") or "")}</b>'
                     f'<span style="color:{muted};font-size:10px;">{_esc(kw.get("tag") or "")}</span></div>'
                     f'<div style="font-size:10px;color:{muted};margin-top:1px;">{concept}</div>'
-                    f'<div style="height:6px;background:#d6ddd4;border:1px solid {black};margin:5px 0;overflow:hidden;"><div style="height:100%;width:{heat}%;background:{bar_color};"></div></div>'
+                    f'<div style="height:6px;background:#cfcfce;border:1px solid {black};margin:5px 0;overflow:hidden;"><div style="height:100%;width:{heat}%;background:{bar_color};"></div></div>'
                     f'<div style="font-size:10px;color:{ink};line-height:1.5;"><b>{_esc(heat_label)}</b>·热度<b>{heat}</b>｜情绪<b>{_esc(sentiment_label)}</b>（净{kw.get("net",0):+d}）｜{kw.get("sources",0)}源·{kw.get("mentions",0)}条</div>'
                     f'<div style="margin-top:4px;">'
                     f'<span style="font-size:10px;background:{black};color:{neon_green if rating.startswith("强多") or "偏多" in rating else (danger_hi if "偏空" in rating or "强空" in rating else "#fff")};padding:1px 4px;">{_esc(rating)}</span> '
-                    f'<span style="font-size:10px;background:{"#2a1210" if flow=="流出" else (neon_green if flow=="流入" else paper)};color:{"#ff8d7e" if flow=="流出" else (black if flow=="流入" else muted)};border:1px solid {black};padding:1px 4px;">{_esc(flow)}</span> '
+                    f'<span style="font-size:10px;background:{"#c4c4c2" if flow=="流出" else (black if flow=="流入" else paper)};color:{black if flow=="流出" else ("#fff" if flow=="流入" else muted)};border:1px solid {black};padding:1px 4px;">{_esc(flow)}</span> '
                     f'<span style="font-size:10px;background:{paper};border:1px solid {black};color:{muted};padding:1px 4px;">风险{_esc(risk)}</span>'
                     f'</div>'
                     f'{ev_html}'
@@ -5243,7 +5243,7 @@ f'<div class="ftr">近30日只统计已核验发文日的全球政策，已观�
     css = (
         f'<style>body,td,div,span,a{{font-family:Arial,\'PingFang SC\',\'Microsoft YaHei\',\'Noto Sans SC\',sans-serif;box-sizing:border-box;}}'
         f'.bg{{width:100%;max-width:100%;margin:0;padding:10px;background:{paper};color:{ink};word-break:break-word;}}'
-        f'.card{{margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {neon_green};padding:8px 10px 6px;}}'
+        f'.card{{margin:0 0 10px;background:{paper_lift};border:1px solid {black};border-top:4px solid {black};padding:8px 10px 6px;}}'
         f'.card-m{{margin:0 0 10px;background:{black};border-left:5px solid {neon_green};padding:12px 11px;color:#fff;}}'
         f'.hdr{{display:flex;justify-content:space-between;align-items:center;}}'
         f'.tag{{color:{neon_green};background:{black};padding:2px 5px;font-size:10px;font-weight:700;}}'
@@ -5259,17 +5259,17 @@ f'<div class="ftr">近30日只统计已核验发文日的全球政策，已观�
         f'.td-hdr{{padding:6px 0 1px;}}'
         f'.td-bdr{{border-bottom:1px solid {rule};}}'
         f'.ev{{margin:2px 0 0 12px;color:{muted};font-size:11px;word-break:break-all;}}'
-        f'.lnk{{color:{ink};text-decoration:underline;text-decoration-color:{neon_green};}}'
+        f'.lnk{{color:{ink};text-decoration:underline;text-decoration-color:{black};}}'
         f'.hl{{color:{neon_green};background:{black};padding:1px 3px;font-weight:700;}}'
         f'.hl-d{{color:{danger_hi};background:{black};padding:1px 3px;font-weight:700;}}'
         f'.txt{{margin-top:4px;color:{ink};font-size:13px;line-height:1.5;word-break:break-all;}}'
         f'.ftr{{margin-top:6px;padding-top:4px;border-top:1px dashed {rule};color:{muted};font-size:10px;}}'
         f'.idx-cell{{text-align:center;width:25%;padding:5px 2px;}}'
-        f'.idx-n{{color:#9aa396;font-size:10px;}}'
+        f'.idx-n{{color:#9a9a9a;font-size:10px;}}'
         f'.idx-p{{font-size:13px;font-weight:700;}}'
         f'.idx-c{{color:#fff;font-size:10px;}}'
         f'.up{{color:{neon_green};}}.dn{{color:{danger_hi};}}'
-        f'.bdr-l{{border-left:1px solid #3d463b;}}'
+        f'.bdr-l{{border-left:1px solid #444444;}}'
         f'.mkt{{margin-top:8px;padding-top:6px;border-top:1px dashed {rule};}}'
         f'.mkt-h{{margin:2px 0 4px;}}'
         f'</style>'
