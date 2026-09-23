@@ -851,28 +851,6 @@ footer strong { display: block; color: var(--ink); text-align: center; font-size
   word-break: break-all;
   margin-bottom: 10px;
 }
-.drawer-evidence {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.drawer-evidence li {
-  padding: 8px 0;
-  border-top: 1px dashed var(--rule);
-  font-size: 11px;
-  line-height: 1.6;
-  word-break: break-all;
-}
-.drawer-evidence li:first-child { border-top: none; padding-top: 0; }
-.drawer-evidence .ev-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 3px; }
-.drawer-evidence .ev-title { color: var(--ink); }
-.drawer-evidence .ev-title a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--green); }
-.drawer-evidence .ev-title a:hover { background: var(--green); }
-.ev-dir { padding: 1px 4px; font-size: 10px; font-weight: 700; border: 1px solid var(--black); }
-.ev-dir.up { background: var(--black); color: var(--green); }
-.ev-dir.down { background: #2a1210; color: #ff8d7e; }
-.ev-dir.flat { background: var(--paper); color: var(--ink-soft); }
-.drawer-empty { color: var(--ink-soft); font-size: 11px; padding: 6px 0; }
 .heatmap-empty {
   grid-column: 1 / -1;
   padding: 18px;

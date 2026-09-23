@@ -1727,7 +1727,7 @@ def analyze_keyword_heatmap(brief: dict, top_n: int = 40) -> dict:
         "top_pressure": top_pressure,
         "headline": headline,
         "indicators": _HEATMAP_INDICATORS,
-        "note": "指标口径：热度=提及×(1+ln(跨源+1))归一；情绪=(多-空)/信号；爆发=热度×|情绪|；分歧=1-|情绪|；资金倾向由情绪与热度推断。证据为命中该关键词的原标题，仅供参考。",
+        "note": "指标口径：热度=提及×(1+ln(跨源+1))归一；情绪=(多-空)/信号；爆发=热度×|情绪|；分歧=1-|情绪|；资金倾向由情绪与热度推断。线索列表（标题/来源/时间/情绪标签）不展示，仅统计信号，不构成投资建议。",
     }
 
 
@@ -4864,7 +4864,7 @@ def build_html(
 
     # ── 「AI 情绪热力图」卡片：关键词级热度与情绪（面向股市投资）
     #    每个关键词为一个格子，含 9 维投资指标（热度/情绪/共振/分歧/爆发/资金倾向/评级/风险/置信度），
-    #    点格子可下钻看新闻线索（标题/来源/情绪标签）；推送版以表格呈现热力网格与 Top 线索。
+    #    线索列表（标题/来源/时间“当日”/情绪标签 利好/利空/中性）不展示，推送版仅以表格呈现热力网格。
     heatmap = analysis.get("heatmap") or {}
 
     def _heatmap_badge(text: str, kind: str = "") -> str:
@@ -4904,7 +4904,7 @@ def build_html(
                 f'<div class="txt">{headline_hm}</div>'
                 f'<div style="margin:6px 0;color:{ink};font-size:11px;"><span class="{bias_cls}">{_esc(overall_bias)}</span> '
                 f'<span class="sub">Top 4：{top_line}</span></div>'
-                f'<div class="ftr">完整热力网格（{total_hit} 词 × 9 维指标 + 新闻线索）在 <span class="hl">/api/heatmap</span> 与页面可下钻；仅统计信号，不作为投资依据。</div></div>'
+                f'<div class="ftr">完整热力网格（{total_hit} 词 × 9 维指标）在 <span class="hl">/api/heatmap</span> 可查；线索列表不展示，仅统计信号，不作为投资依据。</div></div>'
             )
         limit = 24 if level >= 2 else 12
         shown = keywords[:limit]
@@ -4926,20 +4926,8 @@ def build_html(
                 bar_color = neon_green if kw.get("sentiment", 0) > 0.2 else (danger_hi if kw.get("sentiment", 0) < -0.2 else muted)
                 concept = _esc(kw.get("concept") or kw.get("tag") or "")
                 hint = _esc(kw.get("hint") or "")
-                # 证据（level>=2 才展示线索标题，level 1 仅计数）
-                ev_html = ""
-                if level >= 2:
-                    ev_list = kw.get("evidence") or []
-                    if ev_list:
-                        ev_html = "".join(
-                            f'<div class="ev">· {_esc(ev.get("source") or "")}｜{_esc(ev.get("time") or "当日")}｜{_hl(_trunc(str(ev.get("title") or ""), 44))} '
-                            f'<span style="color:{bar_color};">{"利好" if ev.get("direction")>0 else ("利空" if ev.get("direction")<0 else "中性")}</span></div>'
-                            for ev in ev_list[:2]
-                        )
-                    else:
-                        ev_html = '<div class="ev">暂无线索</div>'
-                else:
-                    ev_html = f'<div class="ev">{kw.get("sources",0)}源·{kw.get("mentions",0)}条｜信号 {kw.get("bull",0)}:{kw.get("bear",0)}</div>'
+                # 线索列表不展示：格子只保留信号计数（标题/来源/时间“当日”/情绪标签 利好/利空/中性 不再列出）
+                ev_html = f'<div class="ev">信号 {kw.get("bull",0)}:{kw.get("bear",0)} · 线索列表不展示</div>'
                 cell = (
                     f'<td style="width:50%;vertical-align:top;padding:6px;border:1px solid {black};border-left:4px solid {border};background:{paper};">'
                     f'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;"><b style="font-size:12px;">{_esc(kw.get("keyword") or "")}</b>'
@@ -4998,7 +4986,7 @@ def build_html(
             f'<table class="tbl-sub" style="margin-top:8px;">'
             f'<tr><td colspan="2" class="td-hdr"><span class="tag">投资级指标说明</span> <span class="sub">9 维量化 · 阈值写死可复算</span></td></tr>'
             f'{ind_rows}</table>'
-            f'<div class="ftr">每个格子=一个投资关键词，热度深浅=关注度，颜色=情绪方向，点邮件仅展示Top线索·完整线索在页面 /api/heatmap 可下钻；{"热度>75为沸腾需防拥挤，" if level>=1 else ""}仅统计信号，不作为投资依据。</div></div>'
+            f'<div class="ftr">每个格子=一个投资关键词，热度深浅=关注度，颜色=情绪方向；线索列表不展示（完整数据在 /api/heatmap）；{"热度>75为沸腾需防拥挤，" if level>=1 else ""}仅统计信号，不作为投资依据。</div></div>'
         )
 
     # ── 「AI 政策深度」/「AI 政策研报」两张卡片：政策法规知识库检索（RAG）+ 修饰词术语口径 +

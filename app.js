@@ -63,7 +63,7 @@ document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
 });
 
 /* ===================== AI 情绪热力图 · 关键词级线索（面向股市投资） =====================
-   热力图以关键词为单元，每个格子可下钻看到提及该词的新闻线索（标题/来源/链接/情绪标签）。
+   热力图以关键词为单元，每个格子可下钻查看该词的 9 维指标与投资提示（线索列表不展示）。
    指标体系（9 维，全部可复算）：
      热度(0-100)=提及×(1+ln(跨源+1))归一 · 情绪分(-1~+1)=(多-空)/信号 · 净信号 · 跨源共振
      分歧度=1-|情绪| · 爆发=热度×|情绪| · 资金倾向(流入/流出/观望) · 评级(强多/偏多/中性/偏空/强空)
@@ -163,29 +163,13 @@ document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
     }
   }
 
-  function evidenceDirLabel(dir){
-    if(dir>0) return {text:'利好',cls:'up'};
-    if(dir<0) return {text:'利空',cls:'down'};
-    return {text:'中性',cls:'flat'};
-  }
-
   function openDrawer(kw){
     if(!drawerEl) return;
     // mark selected
     gridEl.querySelectorAll('.heatmap-cell').forEach(el=>{
       el.classList.toggle('selected', el.dataset.keyword===kw.keyword);
     });
-    const dirInfo=evidenceDirLabel(kw.net>0?1:kw.net<0?-1:0);
     const policyTags=(kw.policy_tags||[]).length ? kw.policy_tags.map(t=>`<span class="badge neutral">${esc(t)}</span>`).join('') : '<span style="color:var(--ink-soft);font-size:10px;">无关联政策维度</span>';
-    const evidenceHtml=(kw.evidence||[]).length ? `<ul class="drawer-evidence">`+(kw.evidence||[]).map(ev=>{
-      const d=evidenceDirLabel(ev.direction);
-      const title=esc(ev.title);
-      const url=ev.url ? `<a href="${esc(ev.url)}" target="_blank" rel="noopener">${title}</a>` : title;
-      return `<li>
-        <div class="ev-head"><span class="ev-dir ${d.cls}">${d.text}</span><span class="badge neutral">${esc(ev.source)}</span><span class="badge neutral">${esc(ev.time||"当日")}</span></div>
-        <div class="ev-title">${url}</div>
-      </li>`;
-    }).join('')+`</ul>` : `<div class="drawer-empty">暂无该关键词的新闻线索（可能为历史回溯数据）</div>`;
     drawerEl.hidden=false;
     drawerEl.innerHTML=`
       <div class="drawer-head">
@@ -207,9 +191,8 @@ document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
       <div class="drawer-reading">${esc(kw.reading)}</div>
       <div style="margin-bottom:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><span style="font-size:11px;font-weight:700;">关联政策维度：</span> ${policyTags}</div>
       <div style="margin-bottom:4px;font-size:11px;font-weight:700;">投资提示：<span style="font-weight:400;color:var(--ink-soft);">${esc(kw.hint)}</span></div>
-      <div style="margin:8px 0 4px;font-size:11px;font-weight:700;">新闻线索（命中该关键词的标题/来源/情绪标签，最多 3 条）</div>
-      ${evidenceHtml}
-      <div style="margin-top:10px;color:var(--ink-soft);font-size:10px;">指标：热度 ${kw.heat}（${kw.heat_level}）= 提及${kw.mentions}×(1+ln(${kw.sources}+1))归一；情绪 ${kw.sentiment>0?'+':''}${kw.sentiment}（${kw.sentiment_label}）；爆发 ${kw.burst}=热度×|情绪|；分歧 ${kw.divergence}；资金倾向 ${kw.flow}。仅统计信号，不构成投资建议。</div>
+      <div style="margin:8px 0 4px;font-size:10px;color:var(--ink-soft);">线索列表（标题/来源/时间/情绪标签）不展示；完整数据见 /api/heatmap 接口。仅统计信号，不构成投资建议。</div>
+      <div style="margin-top:6px;color:var(--ink-soft);font-size:10px;">指标：热度 ${kw.heat}（${kw.heat_level}）= 提及${kw.mentions}×(1+ln(${kw.sources}+1))归一；情绪 ${kw.sentiment>0?'+':''}${kw.sentiment}（${kw.sentiment_label}）；爆发 ${kw.burst}=热度×|情绪|；分歧 ${kw.divergence}；资金倾向 ${kw.flow}。仅统计信号，不构成投资建议。</div>
     `;
     drawerEl.querySelector('.drawer-close').onclick=closeDrawer;
     drawerEl.scrollIntoView({behavior:'smooth',block:'nearest'});
