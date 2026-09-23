@@ -43,8 +43,8 @@
     default_fetch_limit() : 每个数据源默认抓取条数（与推送口径一致）
     check_market_freshness() : 大盘数据新鲜度检查（推送前闸门：不是最新就不推）
     collect_market_for_push(): 推送入口专用，一次抓取返回 (market, freshness)
-    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（「AI 每日总结 → AI 政策分析 → AI 政策深度
-                         → AI 政策研报 → AI 板块机会 → AI 看盘」，正文最后追加「全网快讯」列表：
+    build_html(brief)  : 由采集结果生成适合微信阅读的 HTML 简报（「AI 每日总结 → AI 看盘 → AI 情绪热力图
+                         → AI 政策分析 → AI 政策深度 → AI 政策研报 → AI 板块机会」，正文最后追加「全网快讯」列表：
                          每源 3 条、跨源去重、不标注来源）
 """
 from __future__ import annotations
@@ -4704,7 +4704,8 @@ def build_html(
     ``series`` 为「AI 政策研报」板块时序模型（LSTM / Prophet 式分解）的输入序列：
     缺省时用 :func:`get_policy_series`——推送路径缓存的真实日 K，否则明确标注的合成演示序列。
     ``max_items_per_source`` / ``max_length`` 参数保留用于兼容既有调用与推送容量配置；
-    正文以分析栏目为主（AI 每日总结 → AI 政策分析 → AI 政策深度 → AI 政策研报 → AI 板块机会 → AI 看盘），
+    正文以分析栏目为主（AI 每日总结 → AI 看盘 → AI 情绪热力图 → AI 政策分析 → AI 政策深度 → AI 政策研报 → AI 板块机会），
+    「AI 看盘」紧跟「AI 每日总结」之后，让最新的 A 股 / 港股 / 美股行情在开篇就能看到；
     不展示监测平台清单、时间核对或推送协议说明。
     **正文最后（免责声明与作者署名之前）追加「全网快讯」列表**：每个数据源固定保留
     :data:`NEWS_ITEMS_PER_SOURCE`（3）条，按源顺序取每源前 3 条并跨源去重，
@@ -5339,11 +5340,11 @@ f'<div class="ftr">近30日只统计已核验发文日的全球政策，已观�
             f'<div style="color:{neon_green};font-size:20px;font-weight:800;">章鱼 AI 全景分析</div>'
             f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内外数据，由多个大模型混合部署。</div></div>'
             f'<div class="card"><div class="hdr"><span class="tag">AI 每日总结</span></div><div class="txt">{headline}</div>{points_html}</div>'
+            + kanpan_card
             + heatmap_card
             + policy_card
             + policy_deep_cards
             + opportunities_card
-            + kanpan_card
             + _news_card(per_source)
             + f'<div style="margin:8px 0 0;color:{muted};font-size:10px;text-align:center;">数据仅供参考，不构成投资建议</div>'
             + f'<div style="margin:6px 0 0;padding:6px 4px 0;border-top:1px solid {black};color:{black};font-size:10px;text-align:center;font-weight:700;">{_esc(author)}</div>'
@@ -5351,7 +5352,7 @@ f'<div class="ftr">近30日只统计已核验发文日的全球政策，已观�
         )
 
     # 容量收敛顺序：先降「政策深度 / 政策研报」档位（派生内容），再逐级收敛快讯列表，
-    # 最后才整段省略快讯——「AI 每日总结 / 政策分析 / 板块机会 / 看盘」四个主卡片始终保留，
+    # 最后才整段省略快讯——「AI 每日总结 / 看盘 / 政策分析 / 板块机会」四个主卡片始终保留，
     # 保证任何账号口径（会员 10 万字 / 普通 2 万字）都能发得出去。
     cap = (NEWS_ITEMS_PER_SOURCE if max_items_per_source is None
            else min(max_items_per_source, NEWS_ITEMS_PER_SOURCE))
