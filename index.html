@@ -7,7 +7,7 @@
   <meta name="author" content="章鱼 ai" />
   <meta name="theme-color" content="#ecefea" />
   <title>章鱼 AI 全景分析</title>
-  <link rel="stylesheet" href="styles.css?v=20260922" />
+  <link rel="stylesheet" href="styles.css?v=20260923" />
 </head>
 <body>
   <div class="crt-overlay" aria-hidden="true"></div>
@@ -154,75 +154,90 @@
       </article>
     </section>
 
-    <section class="pixel-section">
+    <section class="pixel-section" id="policyDeepSection">
       <div class="pixel-section-head">
         <div><span class="kicker">AI POLICY DEEP</span><h2>AI 政策深度</h2></div>
-        <span class="ai-pill">✦ 知识库 × 推理链</span>
+        <span class="ai-pill" id="policyDeepPill">✦ 近30日 · 三市</span>
       </div>
-      <article class="insight-card">
-        <ul class="insight-points sector-points">
-          <li class="group-row"><span class="group-label">政策法规知识库检索</span><span class="group-note">央行报告 / 财政部文件 / 监管规章 / 境外央行决议外掛为知识库 · 命中 3 / 18 条</span></li>
-          <li><span class="point-no">01</span><span class="point-label press">2024-12</span><span><mark class="press">出口管制</mark><span class="sector-stat">国务院 / 商务部 · 行政法规《两用物项出口管制条例施行》 · 匹配度 7.0</span>
+      <article class="insight-card" id="policyDeepCard">
+        <p class="policy-headline" id="policyDeepHeadline">近30日（2026-08-25 至 2026-09-23）核验<mark>8 项正式发布</mark>、1 项政策信号、1 项窗口内生效。压制主线：<mark class="press">美联储加息至 3.75%-4.00%</mark>、<mark class="press">欧央行存款利率至 2.50%</mark>。对冲支撑：<mark>上市房企再融资开闸</mark>、<mark>房贷期限延至 40 年</mark>。三市：A 股中性、港股中性、<mark class="press">美股偏空</mark>。已观测与机制推演分开，不外推未报道的指数点位。</p>
+        <div class="impact-board" id="policyDeepBoard">
+          <div class="impact-cell neutral">
+            <div class="impact-name">A股 · 指数分 -0.08</div>
+            <div class="impact-bias">中性</div>
+            <div class="impact-score">机制推演，不外推点位</div>
+            <div class="impact-split"><b>受益</b> 地产链、券商、银行<br><b>承压</b> 长久期成长、北向敏感、出口链</div>
+          </div>
+          <div class="impact-cell neutral">
+            <div class="impact-name">港股 · 指数分 -0.04</div>
+            <div class="impact-bias">中性</div>
+            <div class="impact-score">机制推演，不外推点位</div>
+            <div class="impact-split"><b>受益</b> 内房股、中资券商、互联互通<br><b>承压</b> 恒生科技、利率敏感、欧洲敞口</div>
+          </div>
+          <div class="impact-cell press">
+            <div class="impact-name">美股 · 指数分 -3.24</div>
+            <div class="impact-bias">偏空</div>
+            <div class="impact-score">含已观测收盘反应</div>
+            <div class="impact-split"><b>受益</b> 银行<br><b>承压</b> 长久期成长、AI 算力、道指成分</div>
+          </div>
+        </div>
+        <ul class="insight-points sector-points" id="policyDeepList">
+          <li class="group-row"><span class="group-label">窗口内政策发布</span><span class="group-note">2026-08-25 至 2026-09-23 · 10 项已核验 · 新的在前 · 正式发布才计入「发布」</span></li>
+          <li><span class="point-no">09-20</span><span class="point-label">LPR</span><span><mark>中性 · 发布</mark><span class="sector-stat">中国人民银行 · 1-4 周</span>
             <ul class="sector-evidence">
-              <li>· 检索依据：命中「制裁、商务部、地缘与贸易政策」</li>
-              <li>· 背景知识：把两用物项出口管制统一到行政法规层级，实行清单化管理与许可制度，并保留反制措施。</li>
-              <li>· 历史市场含义：管制与反制属于典型的供给侧扰动，短期利好相关资源的定价权方，中期抬升全球供应链成本。</li>
+              <li>· 1 年期 3.0%、5 年期以上 3.5%，连续第 16 个月不变。7 天逆回购利率仍为 1.40%。</li>
+              <li>· A 股机制轻微承压：8·28 地产组合拳没有利率配套。结果符合预期，不外推点位。</li>
             </ul></span></li>
-          <li><span class="point-no">02</span><span class="point-label press">2024-12</span><span><mark class="press">实体清单</mark><span class="sector-stat">美国商务部 BIS · 出口管制规则《对华半导体设备与高带宽存储出口管制规则升级》 · 匹配度 7.0</span>
+          <li><span class="point-no">09-18</span><span class="point-label press">日央行</span><span><mark class="press">偏鹰 · 发布</mark><span class="sector-stat">政策利率至 1.25% · 7 比 2</span>
             <ul class="sector-evidence">
-              <li>· 检索依据：命中「制裁、关税、地缘与贸易政策」</li>
-              <li>· 历史市场含义：管制升级短期压制相关设备与存储链情绪，中期强化国产替代与自主可控主线的估值支撑。</li>
+              <li>· 三市指数不记方向：加息已被计价，分裂投票削弱连续加息预期。</li>
+              <li>· 已观测的是日股和汇率：日经 225 上涨约 1.5%，美元兑日元回到 157 上方，日元不升反跌。</li>
             </ul></span></li>
-          <li><span class="point-no">03</span><span class="point-label">2024-04-12</span><span><mark>从严监管</mark><span class="sector-stat">国务院 / 证监会 · 若干意见《新「国九条」》 · 匹配度 7.0</span>
+          <li><span class="point-no">09-16</span><span class="point-label press">美联储</span><span><mark class="press">偏鹰 · 发布</mark><span class="sector-stat">联邦基金利率 3.75%-4.00% · 一致加息 25bp</span>
             <ul class="sector-evidence">
-              <li>· 检索依据：命中「监管、合规、资本市场监管」</li>
-              <li>· 历史市场含义：执法尺度与违规成本同步抬升，小市值、绩差股与题材股承压，高分红与行业龙头相对受益。</li>
+              <li>· 美股已观测：三大指数收跌，道指约 600 点（公开报道约 500–630 点）。点阵图指向年内再加息一次，2027 年不降息。</li>
+              <li>· A 股 / 港股为机制推演：贴现率上修，长久期成长与恒生科技承压；不外推这两个市场的点位。银行净息差方向相反。</li>
             </ul></span></li>
-          <li><span class="point-no">＋1</span><span class="point-label">LLM 对比分析</span><span>历史对照：2024-12 国务院 / 商务部《两用物项出口管制条例施行》关键表述「出口管制」，当时含义为管制与反制属于典型的供给侧扰动。本次信号取向<mark class="press">偏鹰</mark>，与历史方向一致（同为收紧 / 管制取向）。历史经验是合规成本与估值同时受压，题材与高估值方向先调整，龙头与高分红相对抗跌。</span></li>
-          <li class="group-row"><span class="group-label">政策术语口径（修饰词解读）</span><span class="group-note">经济学 + 法学双维口径 · 加权强度 -0.67 → 术语口径中性</span></li>
-          <li><span class="point-no">·</span><span class="point-label press">「从严」</span><span>监管口径：执法尺度与违规成本同步抬升（强度 -1.5）
+          <li><span class="point-no">09-10</span><span class="point-label press">欧央行</span><span><mark class="press">偏鹰 · 发布</mark><span class="sector-stat">存款便利利率至 2.50% · 9 月 16 日生效</span>
             <ul class="sector-evidence">
-              <li>· 市场含义：合规成本上升，小市值与题材股承压，龙头相对受益</li>
-              <li>· 法律含义：从严执法、从重处罚的执法尺度宣示</li>
+              <li>· 2026 年第二次加息，能源通胀是触发因素。拉加德称风险偏向上行，但不预承诺定路径。</li>
+              <li>· 三市按机制记承压，当日美股点位不由这一则单独决定。下次会议 10 月 29 日。</li>
             </ul></span></li>
-          <li><span class="point-no">·</span><span class="point-label press">「强监管」</span><span>监管口径：全面强化监管（强度 -1.5）
+          <li><span class="point-no">09-10</span><span class="point-label">十五五</span><span><mark>偏鸽 · 发布</mark><span class="sector-stat">金融强国建设规划 · 资本市场八个“进一步”</span>
             <ul class="sector-evidence">
-              <li>· 市场含义：估值中枢下移与出清并行，长期利好合规龙头</li>
-              <li>· 法律含义：监管权限与责任边界的扩张</li>
+              <li>· 到 2030 年金融调控协同、国际竞争力提高；推进人民币离岸市场与中长期资金。</li>
+              <li>· A 股 / 港股是中期制度支撑（券商、互联互通），不是即期资金注入，不外推涨幅。</li>
             </ul></span></li>
-          <li><span class="point-no">·</span><span class="point-label">「支持」</span><span>政策取向：明确支持（强度 +1.0）
-            <ul class="sector-evidence"><li>· 市场含义：政策受益方向获得资金关注</li></ul></span></li>
-          <li class="group-row"><span class="group-label">政策舆情情感打分</span><span class="group-note">政策发布后的新闻舆情与官媒解读 · 正向 / 中性 / 负向即时打分（136 条政策舆情）</span></li>
-          <li><span class="point-no">·</span><span class="point-label press">整体 负向</span><span><mark class="press">正向 10 : 中性 103 : 负向 23</mark><span class="sector-stat">情绪分 -0.15</span>
+          <li><span class="point-no">09-09</span><span class="point-label">美财政部</span><span><mark>生效</mark><span class="sector-stat">长端回购扩容实施 · 发文在窗口外</span>
             <ul class="sector-evidence">
-              <li>· 官媒 / 官方口径：正向 8 : 中性 52 : 负向 5（情绪分 +0.05，中性）</li>
-              <li>· 市场化媒体解读：正向 2 : 中性 51 : 负向 18（情绪分 -0.32，负向）</li>
+              <li>· 8 月 19 日把单次上限至少翻倍的安排，9 月 9 日才生效，这里不重复计为新发文。</li>
+              <li>· 已观测的是债市：扩大操作没有挡住长债下跌。股市不因此记成增量宽松。</li>
             </ul></span></li>
-          <li><span class="point-no">·</span><span class="point-label">政策窗口期</span><span><mark>预期差 +0.37</mark><span class="sector-stat">官媒口径中性 / 市场解读负向</span>
-            <ul class="sector-evidence"><li>· 历史上此类分歧常在政策细则落地前后收敛，是政策窗口期观察点；属统计信号，仅供参考、不作为投资依据。</li></ul></span></li>
-          <li class="group-row"><span class="group-label">政策传导图谱</span><span class="group-note">政策主体 → 受影响行业 → 产业链上下游节点 · 4 条链 · 56 个节点</span></li>
-          <li><span class="point-no">01</span><span class="point-label press">地缘与贸易政策</span><span><mark class="press">政策净空</mark><span class="sector-stat">白宫 / 商务部 / 外交部 · 结构性影响 · 6-36 个月</span>
+          <li><span class="point-no">08-28</span><span class="point-label press">杰克逊霍尔</span><span><mark class="press">偏鹰 · 信号</mark><span class="sector-stat">讲话，不是议息决议</span>
             <ul class="sector-evidence">
-              <li>· 受影响行业：半导体设备、存储芯片、军工、能源航运</li>
-              <li>· 上游 出口管制清单、关税税率 → 中游 供应链改道与转口、国产替代进度 → 下游 终端成本、海外资本开支</li>
+              <li>· 沃什：必须确信通胀足够快回到目标，否则仍有工作要做。9 月加息概率升至约 55%–60%。</li>
+              <li>· 三市先定价加息，长久期成长与恒生科技按机制承压。不把讲话写成已经落地的决议。</li>
             </ul></span></li>
-          <li><span class="point-no">02</span><span class="point-label press">资本市场监管</span><span><mark class="press">政策净空</mark><span class="sector-stat">证监会 / 交易所 · 结构性影响 · 12-36 个月</span>
+          <li><span class="point-no">08-28</span><span class="point-label">房贷</span><span><mark>偏鸽 · 发布</mark><span class="sector-stat">银发〔2026〕171 号 · 期限延至 40 年</span>
             <ul class="sector-evidence">
-              <li>· 受影响行业：券商、高股息蓝筹、中小市值题材</li>
-              <li>· 上游 发行上市准入、退市与减持规则 → 中游 一级市场融资节奏、筹码供给 → 下游 市场估值中枢、风格切换</li>
+              <li>· 个人住房贷款最长 40 年；开发贷款主办银行制；预售项目竣工备案后才放个人房贷。</li>
+              <li>· A 股地产链、银行、建筑建材与港股内房获支撑。这是行业机制，不是已复核的指数涨幅。</li>
             </ul></span></li>
-          <li><span class="point-no">03</span><span class="point-label press">财政 · 关税与债务</span><span><mark class="press">政策净空</mark><span class="sector-stat">财政部 / 全国人大 · 结构性影响 · 6-24 个月</span>
+          <li><span class="point-no">08-28</span><span class="point-label">证监会</span><span><mark>偏鸽 · 发布</mark><span class="sector-stat">资本市场支持房地产发展新模式</span>
             <ul class="sector-evidence">
-              <li>· 受影响行业：基建、设备制造、消费、地方城投链</li>
-              <li>· 上游 赤字与专项债额度、国债发行节奏 → 中游 项目资本金、设备与工程订单 → 下游 钢材水泥需求、耐用品销量</li>
+              <li>· 上市房企可定增再融资，并以股份、定向可转债或现金并购涉房资产；公司债、CMBS、REITs 一并打开。</li>
+              <li>· 受益看 A 股地产链、券商和港股内房、中资券商。募集资金穿透监管，造假仍是红线。</li>
             </ul></span></li>
-          <li class="group-row"><span class="group-label">分析师推理链</span><span class="group-note">宏观背景 → 行业限制 → 资金流向 → 受益板块 · 置信度 高</span></li>
-          <li><span class="point-no">01</span><span class="point-label">宏观背景</span><span>政策面热度集中在「地缘与贸易政策、资本市场监管、财政」（40 源命中 · 115 条提及）；取向<mark class="press">偏鹰</mark>（鹰派 21 : 鸽派 4）；术语口径「从严」「强监管」抬升合规成本；历史背景：2024-12 国务院 / 商务部「出口管制」。</span></li>
-          <li><span class="point-no">02</span><span class="point-label press">行业限制</span><span>受限方向：地缘与贸易政策（政策净空 7 · 偏鹰）、资本市场监管（政策净空 3 · 中性）、财政（政策净空 3 · 偏鹰）；制度约束参照 2024-12《两用物项出口管制条例施行》。</span></li>
-          <li><span class="point-no">03</span><span class="point-label">资金流向</span><span>政策面多空 15 : 19（34 条信号）；资金偏向：<mark>货币政策</mark>、<mark>汇率与外汇干预</mark>；资金回避：<mark class="press">地缘与贸易政策</mark>、<mark class="press">资本市场监管</mark>；舆情窗口：预期差 +0.37（官媒 +0.05 vs 市场 -0.32）。</span></li>
-          <li><span class="point-no">04</span><span class="point-label">受益板块</span><span>受益方向：全球风险资产、贵金属、出口链、货币政策、汇率与外汇干预；传导路径：白宫 / 商务部 → 半导体设备、存储芯片、军工 → 上游出口管制清单 → 下游终端成本与海外资本开支。</span></li>
+          <li><span class="point-no">08-28</span><span class="point-label">现房销售</span><span><mark>中性 · 发布</mark><span class="sector-stat">住建部等三部门</span>
+            <ul class="sector-evidence">
+              <li>· 有序推行商品住房现房销售，和同日信贷文件衔接：拿到房，再放贷。</li>
+              <li>· 购房人信心改善，高杠杆房企回款不一定立即好转。指数方向不单列点位。</li>
+            </ul></span></li>
+          <li class="group-row"><span class="group-label">板块传导</span><span class="group-note">跨政策加总 · 不是指数点位 · 同一天的地产文件按主题合并计分，避免把组合拳乘成三倍</span></li>
+          <li><span class="point-no">＋</span><span class="point-label">受益</span><span>地产链、内房股、券商 / 中资券商、银行。驱动是 8 月 28 日信贷、再融资和现房销售，加上 9 月 10 日金融十五五的中期路线图。</span></li>
+          <li><span class="point-no">－</span><span class="point-label press">承压</span><span>长久期成长、AI 算力、道指成分、恒生科技。驱动是杰克逊霍尔信号、欧央行加息，以及 9 月 16 日美联储已观测的收跌。</span></li>
         </ul>
-        <div class="insight-foot"><span>政策法规库检索（RAG）→ 修饰词术语口径 → 舆情情感打分 → 传导图谱 → 四步推理链，全部由当日真实浏览标题驱动；页面为静态预览，实时结果见 <code>/api/policy</code> 与每日推送</span></div>
+        <div class="insight-foot"><span id="policyDeepFoot">窗口截止 2026-09-23，最新已核验发文是 2026-09-20。此后没有写入台账的新发文；未核实日期的快讯不当成政策发布。8 月 19 日美债回购发文在窗口外，不重复计入。指数分可复算，仅供参考，不构成投资建议。实时结果见 <code>/api/policy</code></span></div>
       </article>
     </section>
 

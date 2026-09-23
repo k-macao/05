@@ -1120,6 +1120,112 @@ class PolicyDeepWiringTest(unittest.TestCase):
         self.assertIn("AI 政策分析", tight)
 
 
+class PolicyMarketImpactTest(unittest.TestCase):
+    """「AI 政策深度」主问题：近 30 日已核验的全球政策发布对 A股 / 港股 / 美股的影响。"""
+
+    AS_OF = date(2026, 9, 23)
+
+    def impact(self, brief=None, **kwargs):
+        kwargs.setdefault("as_of", self.AS_OF)
+        return sources.policy_impact.analyze_policy_market_impact(brief, **kwargs)
+
+    def test_window_is_thirty_inclusive_days(self):
+        start, end = sources.policy_impact.policy_window_bounds(self.AS_OF, 30)
+        self.assertEqual(end, self.AS_OF)
+        self.assertEqual(start, date(2026, 8, 25))
+        self.assertEqual((end - start).days + 1, 30)
+
+    def test_default_window_keeps_verified_releases_and_drops_older_announcement(self):
+        out = self.impact()
+        ids = [item["id"] for item in out["releases"]]
+        self.assertIn("FED-HIKE-20260916", ids)
+        self.assertIn("PBC-HOUSING-20260828", ids)
+        self.assertIn("ECB-HIKE-20260910", ids)
+        self.assertIn("BOJ-HIKE-20260918", ids)
+        self.assertIn("PBC-LPR-20260920", ids)
+        # 8 月 19 日的回购发文在窗口外；9 月 9 日只记生效，不重复计为新发文。
+        self.assertNotIn("UST-BUYBACK-20260819", ids)
+        self.assertIn("UST-BUYBACK-20260909", ids)
+        self.assertEqual(out["counts"]["发布"], 8)
+        self.assertEqual(out["counts"]["信号"], 1)
+        self.assertEqual(out["counts"]["生效"], 1)
+        self.assertEqual(out["counts"]["outside"], 1)
+        self.assertEqual(out["latest_release"], "2026-09-20")
+        self.assertIn("未核实日期的快讯不当成政策发布", out["gap_note"])
+
+    def test_earlier_as_of_includes_august_announcement(self):
+        out = self.impact(as_of=date(2026, 8, 24))
+        ids = [item["id"] for item in out["releases"]]
+        self.assertIn("UST-BUYBACK-20260819", ids)
+        self.assertNotIn("FED-HIKE-20260916", ids)
+        self.assertEqual(out["start"], "2026-07-26")
+
+    def test_empty_window_does_not_invent_market_impact(self):
+        out = self.impact(as_of=date(2024, 1, 15))
+        self.assertEqual(out["releases"], [])
+        self.assertIn("没有已核验的全球政策发布", out["headline"])
+        self.assertIn("不外推", out["headline"])
+        self.assertTrue(all(market["bias"] == "—" for market in out["markets"]))
+
+    def test_fed_hike_is_observed_us_pressure_while_a_share_stays_split(self):
+        out = self.impact()
+        by_name = {market["name"]: market for market in out["markets"]}
+        self.assertEqual(by_name["美股"]["bias"], "偏空")
+        self.assertTrue(by_name["美股"]["observed"])
+        self.assertLessEqual(by_name["美股"]["score"], -1.2)
+        self.assertIn("长久期成长", by_name["美股"]["pressure"])
+        self.assertIn("银行", by_name["美股"]["support"])
+        # 国内地产组合拳与海外加息对冲，指数不编成单边。
+        self.assertEqual(by_name["A股"]["bias"], "中性")
+        self.assertFalse(by_name["A股"]["observed"])
+        self.assertIn("地产链", by_name["A股"]["support"])
+        self.assertIn("长久期成长", by_name["A股"]["pressure"])
+        self.assertEqual(by_name["港股"]["bias"], "中性")
+        self.assertIn("内房股", by_name["港股"]["support"])
+        self.assertIn("恒生科技", by_name["港股"]["pressure"])
+        fed = next(item for item in out["releases"] if item["id"] == "FED-HIKE-20260916")
+        self.assertIn("已观测", fed["stock_line"])
+        self.assertIn("约 600 点", fed["summary"])
+        self.assertEqual(out["pressure_events"][0]["id"], "FED-HIKE-20260916")
+
+    def test_live_titles_do_not_change_score_and_are_escaped(self):
+        plain = self.impact()
+        brief = {"金十数据": [{"title": "Jackson Hole <script>alert(1)</script> 讲话", "url": ""}]}
+        hit = self.impact(brief)
+        self.assertEqual(plain["markets"][0]["score"], hit["markets"][0]["score"])
+        jackson = next(item for item in hit["releases"] if item["id"] == "FED-JH-20260828")
+        self.assertTrue(jackson["mentions"])
+        html = sources.policy_impact.render_policy_impact_rows(hit, sources._esc, 2)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertNotIn("<script>alert", html)
+        self.assertIn("近30日全球政策", html)
+
+    def test_bias_thresholds_are_fixed(self):
+        label = sources.policy_impact._bias_label
+        self.assertEqual(label(1.2), "偏多")
+        self.assertEqual(label(0.45), "中性偏多")
+        self.assertEqual(label(0), "中性")
+        self.assertEqual(label(-0.45), "中性")
+        self.assertEqual(label(-0.46), "中性偏空")
+        self.assertEqual(label(-1.2), "偏空")
+
+    def test_analyze_policy_exposes_market_impact_without_deep_models(self):
+        shallow = sources.analyze_policy({}, deep=False)
+        self.assertIn("market_impact", shallow)
+        self.assertNotIn("kb", shallow)
+        self.assertIn("releases", shallow["market_impact"])
+
+    def test_build_html_leads_policy_deep_with_thirty_day_impact(self):
+        out = sources.build_html({"金十数据": [{"title": "今天天气不错", "url": ""}]})
+        deep = out[out.index("AI 政策深度"):out.index("AI 政策研报")]
+        self.assertIn("近30日全球政策 → 股市影响", deep)
+        self.assertLess(deep.index("近30日全球政策"), deep.index("政策法规知识库检索"))
+        for token in ("A股", "港股", "美股", "窗口内政策发布", "板块传导"):
+            self.assertIn(token, deep)
+        # 对照层仍在，避免深度卡片退回成只有当日词频。
+        self.assertIn("政策法规知识库检索", deep)
+
+
 class BuildHtmlTest(unittest.TestCase):
 
     def _kanpan(self):
@@ -1565,8 +1671,10 @@ class AshareReviewTest(unittest.TestCase):
         us_review = sources.analyze_us(market=sources._US_SNAPSHOT)
         out = sources.build_html(brief, review=review, hk_review=hk_review, us_review=us_review)
         self.assertIn("AI 看盘", out)
-        # 05「数据获取与时间核对」不进入正文；行情分析本身仍保留。
-        self.assertNotIn(sources._ASHARE_SNAPSHOT["date"], out)
+        # 05「数据获取与时间核对」不进入看盘正文；行情分析本身仍保留。
+        # 政策深度会写已核验发文日（其中 8 月 28 日与快照日同一天），不能拿全文字符串当看盘日期泄漏的判据。
+        kanpan = out[out.index("AI 看盘"):]
+        self.assertNotIn(sources._ASHARE_SNAPSHOT["date"], kanpan)
         self.assertNotIn("东方财富行情接口", out)
         for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
                       "领涨 / 领跌板块", "主力资金与北向资金", "后市观点与策略"):

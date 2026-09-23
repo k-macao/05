@@ -149,9 +149,11 @@ class ServerSmokeTest(unittest.TestCase):
         status, raw = request(self.base, "GET", "/api/policy")
         self.assertEqual(status, 200)
         data = json.loads(raw)
-        for key in ("buckets", "stance", "headline", "kb", "modifiers", "sentiment",
+        for key in ("buckets", "stance", "headline", "market_impact", "kb", "modifiers", "sentiment",
                     "graph", "reasoning", "mindmap", "research", "models"):
             self.assertIn(key, data)
+        self.assertIn("releases", data["market_impact"])
+        self.assertIn("markets", data["market_impact"])
         self.assertEqual([step["label"] for step in data["reasoning"]["steps"]],
                          ["宏观背景", "行业限制", "资金流向", "受益板块"])
         self.assertIn("lstm", data["models"])
@@ -162,6 +164,9 @@ class ServerSmokeTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("headline", shallow)
         self.assertNotIn("kb", shallow)
+        # 近30日政策→股市影响不跑模型，浅层接口也要带上。
+        self.assertIn("market_impact", shallow)
+        self.assertIn("headline", shallow["market_impact"])
 
     def test_run_without_token_is_503_not_405(self):
         status, raw = request(

@@ -12,7 +12,8 @@
 
 | 位置 | 内容 |
 |---|---|
-| `sources.py` · `analyze_policy()` | 政策引擎：8 个政策维度热度 + 多空方向 + 鹰鸽取向 + 支撑新闻；`deep=True`（默认）叠加下面 ②-⑦ 的深度层 |
+| `policy_impact.py` · `analyze_policy_market_impact()` | **「AI 政策深度」主问题**：近 30 日已核验的全球政策发布对 A股 / 港股 / 美股的影响。指数分可复算；已观测与机制推演分开 |
+| `sources.py` · `analyze_policy()` | 政策引擎：8 个政策维度热度 + 多空方向 + 鹰鸽取向 + 支撑新闻；始终附带 `market_impact`。`deep=True`（默认）再叠加下面 ②-⑦ 的对照层 |
 | `sources.py` · `_POLICY_KB` / `retrieve_policy_context()` / `policy_knowledge()` | ①政策法规知识库（RAG）：检索历史政策 → 与新信号对比分析 |
 | `sources.py` · `interpret_policy_modifiers()` | ③政策修饰词的经济学 + 法学双维解读（`_POLICY_MODIFIERS` 术语库） |
 | `sources.py` · `analyze_policy_sentiment()` | ④政策舆情情感打分（正向 / 中性 / 负向 + 官媒与市场的预期差） |
@@ -23,12 +24,27 @@
 | `sources.py` · `get_policy_series()` / `set_policy_klines()` | 模型输入序列：推送路径缓存的真实日 K → 明确标注的合成演示序列兜底 |
 | `sources.py` · `build_html()` | 推送卡片：「AI 政策分析」+「AI 政策深度」+「AI 政策研报」，紧跟「AI 每日总结」 |
 | `index.html` | 页面板块 `AI POLICY` / `AI POLICY DEEP` / `AI POLICY RESEARCH`（紧跟「AI 每日总结」） |
-| `server.py` | `GET /api/policy`（`?deep=0` 只要基础统计） |
-| `test_sources.py` | `PolicySectionTest` / `PolicyKnowledgeBaseTest` / `PolicyModifierTest` / `PolicySentimentTest` / `PolicyGraphTest` / `PolicyReasoningTest` / `PolicyModelTest` / `PolicyDeepWiringTest` |
+| `server.py` | `GET /api/policy`（`?deep=0` 不跑模型，仍返回近30日 `market_impact`） |
+| `test_sources.py` | `PolicySectionTest` / `PolicyMarketImpactTest` / `PolicyKnowledgeBaseTest` / `PolicyModifierTest` / `PolicySentimentTest` / `PolicyGraphTest` / `PolicyReasoningTest` / `PolicyModelTest` / `PolicyDeepWiringTest` |
 | `test_server.py` | `GET /api/policy` 响应结构 + 推送内容含政策三张卡片且位置在「AI 板块机会」之前 |
 
 口径：政策维度标签见 `sources._POLICY_BUCKETS`；鹰鸽词库见 `_HAWKISH` / `_DOVISH`（否定前缀
 `_POLICY_NEG_NEAR` / `_POLICY_NEG_FAR` 会把立场票翻转，如「不再那么鸽派」计为鹰派）。
+
+---
+
+## 〇.五、近 30 日全球政策发布 → 股市影响
+
+这是「AI 政策深度」卡片的主问题，不是当日标题词频。实现见 `policy_impact.py`。
+
+- **窗口**：含当日的近 30 个自然日。截止 2026-09-23 时，窗口是 2026-08-25 至 2026-09-23。
+- **计入什么**：台账里已核验发文日的正式发布、政策讲话（信号）和窗口内生效。8 月 19 日宣布、9 月 9 日才实施的美债回购，窗口内只记「生效」，不把发文再计一次。
+- **不计入什么**：没有核实日期的快讯。当日抓取标题只用来标注「仍在定价」，不改变指数分，也不被写成新的政策发布。
+- **三市**：A 股、港股、美股分开给指数分和受益 / 承压板块。指数分 = 各主题同向组的最强贡献 + 0.22×方向×(同向条数-1)。阈值：≥1.2 偏多，≥0.45 中性偏多，±0.45 内中性，≤-1.2 偏空。
+- **已观测 vs 机制**：只有公开收盘报道才标已观测。例如 2026-09-16 美联储加息 25bp 至 3.75%-4.00% 后，道指收跌约 600 点。A 股、港股没有对应的已复核点位，就只写传导机制。
+- **诚实缺口**：窗口截止日晚于最新已核验发文时，写明缺口，不把空白日补成行情结论。
+
+对照层（知识库检索、术语口径、舆情、传导图谱、推理链）仍排在这张卡片的后部，不替代窗口内发文。`GET /api/policy?deep=0` 也会返回 `market_impact`。
 
 ---
 

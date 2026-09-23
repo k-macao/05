@@ -27,8 +27,9 @@
     collect_section(k) : 只抓某个板块（policy / world / civic / finance / trending）
     collect_one(name)  : 抓取单个源，返回 [item, ...]
     analyze_brief()    : 本地「AI 总结」引擎（主题热度 + 多空博弈概率）
-    analyze_policy()   : 「AI 政策分析」引擎（政策维度热度 + 多空方向 + 鹰鸽取向；deep=True 时叠加
-                         知识库检索 / 修饰词口径 / 舆情情感 / 传导图谱 / 分析师推理链 / 研报 / LSTM × Prophet）
+    analyze_policy()   : 「AI 政策分析」引擎（政策维度热度 + 多空方向 + 鹰鸽取向；始终附带近30日全球政策
+                         对 A股/港股/美股的影响。deep=True 时再叠加知识库检索 / 修饰词口径 / 舆情情感 /
+                         传导图谱 / 分析师推理链 / 研报 / LSTM × Prophet）
     retrieve_policy_context() : 政策法规知识库检索（RAG 的检索环节，返回历史政策条目与检索理由）
     lstm_policy_forecast()    : 纯 Python 单层 LSTM + BPTT，评估政策后的中长期走势节奏
     prophet_policy_decompose(): Prophet 式加性分解（趋势 + 季节 + 政策效应），剥离季节看政策窗口波动
@@ -59,6 +60,7 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
+import policy_impact
 from urllib.parse import urlencode, urljoin
 from html.parser import HTMLParser
 from http.client import HTTPException
@@ -1972,6 +1974,7 @@ def analyze_policy(brief: dict, series: dict | None = None, deep: bool = True) -
         up_tags / down_tags  政策净多 / 净空的维度标签（按净信号强度排序）
         opportunity_buckets / pressure_buckets  上述两个方向的完整维度明细（供页面 / 简报取用）
         headline     「AI 政策分析」总结句（纯文本，约 100 字）
+        market_impact 近30日全球政策发布对 A股 / 港股 / 美股的影响（与 deep 无关，见 policy_impact.py）
         深度层（deep=True 时追加）：
         kb           政策法规知识库检索结果 {query, tags, hits[{date, issuer, title, phrase, ...}], comparison}
         modifiers    政策修饰词术语解读 {hits[{word, sense, strength, market, legal}], score, bias, reading}
@@ -2104,6 +2107,8 @@ def analyze_policy(brief: dict, series: dict | None = None, deep: bool = True) -
         "pressure_buckets": down_ranked[:2],
     }
     data["headline"] = _compose_policy_headline(data)
+    # 近30日全球政策 → 股市影响不跑 LSTM，浅层接口也返回，供页面与 ?deep=0 使用。
+    data["market_impact"] = policy_impact.analyze_policy_market_impact(brief)
     if deep:
         data.update(analyze_policy_deep(data, brief, series=series))
     return data
@@ -2135,7 +2140,8 @@ def _compose_policy_headline(data: dict) -> str:
 
 
 # ================================================================ 「AI 政策分析」深度层
-# 在「政策维度热度 + 鹰鸽取向」之上补齐高级分析师的完整链路（零第三方依赖、可离线运行）：
+# 「AI 政策深度」的主问题在 policy_impact.py：近30日已核验的全球政策发布对 A股/港股/美股的影响。
+# 下面仍保留高级分析师链路，作为历史对照，不替代窗口内发文（零第三方依赖、可离线运行）：
 #   ① 政策法规知识库检索（RAG）：央行报告 / 财政部文件 / 监管规章 / 境外央行决议作为企业知识库，
 #      解读新政策时先从库中检索关联的历史政策与背景知识，再与新信号做对比分析
 #      （_POLICY_KB → retrieve_policy_context() → policy_knowledge()）
@@ -5010,8 +5016,9 @@ def build_html(
         return f'<tr><td colspan="2" class="sub" style="padding:6px 0;">{_esc(text)}</td></tr>'
 
     def _render_policy_deep(level: int) -> str:
-        """「AI 政策深度」卡片：知识库检索（RAG）→ 术语口径 → 舆情情感 → 传导图谱 → 分析师推理链。"""
-        rows = [_deep_hdr("政策法规知识库检索", kb.get("note") or "先检索历史政策，再做对比分析")]
+        """「AI 政策深度」卡片：近30日全球政策发布对股市的影响，其下保留知识库 / 术语 / 舆情 / 传导 / 推理链作对照。"""
+        rows = [policy_impact.render_policy_impact_rows(policy.get("market_impact") or {}, _esc, level)]
+        rows.append(_deep_hdr("政策法规知识库检索", kb.get("note") or "先检索历史政策，再做对比分析"))
         for rank, hit in enumerate(kb.get("hits") or [], 1):
             rows.append(
                 f'<tr><td class="td-n">{rank:02d}</td><td class="td-t">'
@@ -5097,15 +5104,17 @@ def build_html(
                         f'<div><span class="tag">{_esc(step["label"])}</span></div>'
                         f'<div>{_hl_policy(step["text"])}</div>{evidence_html}</td></tr>')
 
+        impact = policy.get("market_impact") or {}
+        n_rel = (impact.get("counts") or {}).get("in_window", 0)
+        window = impact.get("window_label") or "近30日"
         return (
             f'<div class="card"><div class="hdr"><span class="tag">AI 政策深度</span>'
-            f'<span class="sub">知识库 {len(kb.get("hits") or [])} 条命中 · 推理链 '
-            f'{len(reasoning.get("steps") or [])} 步 · 传导链 {len(graph.get("chains") or [])} 条</span></div>'
+            f'<span class="sub">近{impact.get("days", 30)}日 · {n_rel} 项已核验 · {window}</span></div>'
             f'<table class="tbl-sub">{"".join(rows)}</table>'
-            f'<div class="ftr">政策法规库（央行报告 / 财政部文件 / 监管规章 / 境外央行决议）外掛为知识库：'
-            f'解读新政策时先检索关联历史政策与背景知识，再交由模型做对比分析；修饰词按经济学 + 法学口径解读，'
-            f'政策舆情按正向 / 中性 / 负向即时打分。数据仅供参考。</div></div>'
+            f'<div class="ftr">近30日只统计已核验发文日的全球政策，已观测收盘反应与机制推演分开，不外推未报道的指数点位。'
+            f'下方知识库、术语、舆情与推理链用于对照，不替代窗口内发文。数据仅供参考，不作为投资依据。</div></div>'
         )
+
 
     def _render_policy_research(level: int) -> str:
         """「AI 政策研报」卡片：思维导图（全量档）+ LSTM / Prophet 式模型 + 结构化政策影响研报。"""

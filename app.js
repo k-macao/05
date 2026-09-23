@@ -382,3 +382,87 @@ document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
   window._heatmapReload=loadHeatmap;
   window._heatmapClose=closeDrawer;
 })();
+
+/* AI 政策深度：近 30 日全球政策发布对 A股 / 港股 / 美股的影响。
+   静态页是离线预览；server.py 可用时用 /api/policy?deep=0 覆盖，不跑 LSTM。 */
+(function(){
+  const headlineEl=document.getElementById('policyDeepHeadline');
+  const boardEl=document.getElementById('policyDeepBoard');
+  const listEl=document.getElementById('policyDeepList');
+  const footEl=document.getElementById('policyDeepFoot');
+  const pillEl=document.getElementById('policyDeepPill');
+  if(!headlineEl || !boardEl || !listEl) return;
+
+  function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function biasCls(bias){
+    const text=String(bias||'');
+    if(text.includes('空')) return 'press';
+    if(text.includes('多')) return 'hot';
+    return 'neutral';
+  }
+  function chip(text, press){
+    return press ? `<mark class="press">${esc(text)}</mark>` : `<mark>${esc(text)}</mark>`;
+  }
+
+  function render(impact){
+    if(!impact || !impact.headline) return;
+    let headline=esc(impact.headline);
+    const shorts=[...(impact.pressure_events||[]), ...(impact.support_events||[])]
+      .map(item=>item.short).filter(Boolean)
+      .sort((a,b)=>b.length-a.length);
+    shorts.forEach(short=>{
+      const safe=esc(short);
+      const press=(impact.pressure_events||[]).some(item=>item.short===short);
+      headline=headline.replace(safe, chip(short, press));
+    });
+    headlineEl.innerHTML=headline;
+    boardEl.innerHTML=(impact.markets||[]).map(market=>{
+      const cls=biasCls(market.bias);
+      const obs=market.observed ? '含已观测收盘反应' : '机制推演，不外推点位';
+      const support=(market.support||[]).join('、') || '—';
+      const pressure=(market.pressure||[]).join('、') || '—';
+      const cellCls=cls==='press' ? 'press' : (cls==='hot' ? '' : 'neutral');
+      return `<div class="impact-cell ${cellCls}">
+        <div class="impact-name">${esc(market.name)} · 指数分 ${Number(market.score).toFixed(2)}</div>
+        <div class="impact-bias">${esc(market.bias)}</div>
+        <div class="impact-score">${esc(obs)}</div>
+        <div class="impact-split"><b>受益</b> ${esc(support)}<br><b>承压</b> ${esc(pressure)}</div>
+      </div>`;
+    }).join('');
+    const releases=(impact.releases||[]).map(item=>{
+      const press=item.stance==='偏鹰';
+      return `<li><span class="point-no">${esc((item.date||'').slice(5))}</span><span class="point-label ${press?'press':''}">${esc(item.topic||item.kind)}</span><span>${chip((item.stance||'')+' · '+(item.kind||''), press)}<span class="sector-stat">${esc(item.issuer)} · ${esc(item.horizon||'')}</span>
+        <ul class="sector-evidence"><li>· ${esc(item.title)}</li><li>· ${esc(item.stock_line)}</li></ul></span></li>`;
+    }).join('');
+    const board=impact.sector_board||{};
+    const support=(board.support||[]).map(row=>row.name).join('、') || '—';
+    const pressure=(board.pressure||[]).map(row=>row.name).join('、') || '—';
+    const counts=impact.counts||{};
+    listEl.innerHTML=`<li class="group-row"><span class="group-label">窗口内政策发布</span><span class="group-note">${esc(impact.window_label||'')} · ${counts.in_window||0} 项已核验 · 正式 ${counts['发布']||0} / 信号 ${counts['信号']||0} / 生效 ${counts['生效']||0}</span></li>`
+      + releases
+      + `<li class="group-row"><span class="group-label">板块传导</span><span class="group-note">跨政策加总 · 不是指数点位</span></li>`
+      + `<li><span class="point-no">＋</span><span class="point-label">受益</span><span>${esc(support)}</span></li>`
+      + `<li><span class="point-no">－</span><span class="point-label press">承压</span><span>${esc(pressure)}</span></li>`;
+    if(footEl){
+      footEl.innerHTML=`${esc(impact.gap_note||'')} ${esc(impact.method_short||'')} 实时结果见 <code>/api/policy</code>`;
+    }
+    if(pillEl){
+      const us=(impact.markets||[]).find(market=>market.name==='美股');
+      pillEl.textContent=`✦ 近${impact.days||30}日 · 美股${us?us.bias:''}`;
+    }
+  }
+
+  async function loadPolicyDeep(){
+    try{
+      const res=await fetch('api/policy?deep=0');
+      if(!res.ok) return;
+      const data=await res.json();
+      if(data && data.market_impact && !data.error) render(data.market_impact);
+    }catch(e){ /* 离线或静态托管：保留页面里的 30 日预览 */ }
+  }
+  loadPolicyDeep();
+  if(typeof refreshBtn!=='undefined' && refreshBtn){
+    refreshBtn.addEventListener('click', loadPolicyDeep);
+  }
+  window._policyDeepReload=loadPolicyDeep;
+})();
