@@ -243,11 +243,16 @@ class MockedPushTest(unittest.TestCase):
                 self.assertIn("数据源", payload["content"])
                 self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送
                 self.assertIn("AI 政策分析", payload["content"])  # 政策面板块（鹰鸽取向）同样随简报推送
-                # 政策分析紧跟「AI 每日总结」，其后是深度层与研报两张卡片。
-                for card in ("AI 政策深度", "AI 政策研报"):
+                # 「AI 看盘」紧跟「AI 每日总结」；政策分析在其后，再接深度层与研报两张卡片。
+                for card in ("AI 看盘", "AI 政策深度", "AI 政策研报"):
                     self.assertIn(card, payload["content"])
-                self.assertLess(payload["content"].index("AI 政策分析"),
-                                payload["content"].index("AI 板块机会"))
+                content = payload["content"]
+                self.assertLess(content.index('<span class="tag">AI 每日总结</span>'),
+                                content.index('<span class="tag">AI 看盘</span>'))
+                self.assertLess(content.index('<span class="tag">AI 看盘</span>'),
+                                content.index('<span class="tag">AI 政策分析</span>'))
+                self.assertLess(content.index("AI 政策分析"),
+                                content.index("AI 板块机会"))
             finally:
                 srv.terminate(); srv.wait(timeout=5)
                 mock.terminate(); mock.wait(timeout=5)

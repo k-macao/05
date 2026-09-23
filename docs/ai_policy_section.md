@@ -2,8 +2,8 @@
 
 > 生成依据：`sources.analyze_policy()` 对当日真实抓取标题的统计与推演
 > 状态：**已落地为产品板块**。推送简报与页面均按
-> `AI 每日总结 → AI 政策分析 → AI 政策深度 → AI 政策研报 → AI 板块机会 → AI 看盘 → 全网快讯`
-> 的顺序排列，即「AI 政策分析」紧跟「AI 每日总结」之后。
+> `AI 每日总结 → AI 看盘 → AI 情绪热力图 → AI 政策分析 → AI 政策深度 → AI 政策研报 → AI 板块机会 → 全网快讯`
+> 的顺序排列，即「AI 看盘」紧跟「AI 每日总结」，「AI 政策分析」排在「AI 看盘」「AI 情绪热力图」之后。
 > 本文档是板块口径说明；页面为静态预览，实时结果见 `GET /api/policy` 与每日推送。
 
 ---
@@ -22,8 +22,8 @@
 | `sources.py` · `lstm_policy_forecast()` | ⑥纯 Python 单层 LSTM + BPTT：政策后中长期走势节奏 |
 | `sources.py` · `prophet_policy_decompose()` | ⑦Prophet 式加性分解（趋势 + 季节 + 政策效应），剥离季节看政策窗口波动 |
 | `sources.py` · `get_policy_series()` / `set_policy_klines()` | 模型输入序列：推送路径缓存的真实日 K → 明确标注的合成演示序列兜底 |
-| `sources.py` · `build_html()` | 推送卡片：「AI 政策分析」+「AI 政策深度」+「AI 政策研报」，紧跟「AI 每日总结」 |
-| `index.html` | 页面板块 `AI POLICY` / `AI POLICY DEEP` / `AI POLICY RESEARCH`（紧跟「AI 每日总结」） |
+| `sources.py` · `build_html()` | 推送卡片：「AI 政策分析」+「AI 政策深度」+「AI 政策研报」，排在「AI 每日总结 → AI 看盘 → AI 情绪热力图」之后 |
+| `index.html` | 页面板块 `AI POLICY` / `AI POLICY DEEP` / `AI POLICY RESEARCH`（在 `AI WATCH` 看盘、`AI HEATMAP` 热力图之后） |
 | `server.py` | `GET /api/policy`（`?deep=0` 不跑模型，仍返回近30日 `market_impact`） |
 | `test_sources.py` | `PolicySectionTest` / `PolicyMarketImpactTest` / `PolicyKnowledgeBaseTest` / `PolicyModifierTest` / `PolicySentimentTest` / `PolicyGraphTest` / `PolicyReasoningTest` / `PolicyModelTest` / `PolicyDeepWiringTest` |
 | `test_server.py` | `GET /api/policy` 响应结构 + 推送内容含政策三张卡片且位置在「AI 板块机会」之前 |

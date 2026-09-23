@@ -632,16 +632,16 @@ class PolicySectionTest(unittest.TestCase):
         self.assertIn("政策净空", out)
         self.assertIn("偏鹰", out)
         self.assertIn("条政策提及", out)
-        # 位置：紧跟「AI 每日总结」，其后依次是「AI 政策深度」「AI 政策研报」，再到「AI 板块机会」「AI 看盘」。
+        # 位置：「AI 每日总结 → AI 看盘」之后，其后依次是「AI 政策深度」「AI 政策研报」，再到「AI 板块机会」。
         # 用卡片标题标签定位（正文里也会互相引用板块名，裸文本匹配不可靠）。
         def at(label: str) -> int:
             return out.index(f'<span class="tag">{label}</span>')
 
-        self.assertLess(at("AI 每日总结"), at("AI 政策分析"))
+        self.assertLess(at("AI 每日总结"), at("AI 看盘"))
+        self.assertLess(at("AI 看盘"), at("AI 政策分析"))
         self.assertLess(at("AI 政策分析"), at("AI 政策深度"))
         self.assertLess(at("AI 政策深度"), at("AI 政策研报"))
         self.assertLess(at("AI 政策研报"), at("AI 板块机会"))
-        self.assertLess(out.index("AI 板块机会"), out.index("AI 看盘"))
 
     def test_build_html_policy_card_honest_when_no_signals(self):
         out = sources.build_html({"金十数据": [{"title": "今天天气不错", "url": ""}]}, **self._kanpan())
@@ -1075,10 +1075,9 @@ class PolicyDeepWiringTest(unittest.TestCase):
         def at(label: str) -> int:
             return out.index(f'<span class="tag">{label}</span>')
 
-        positions = [at(label) for label in ("AI 每日总结", "AI 政策分析", "AI 政策深度",
+        positions = [at(label) for label in ("AI 每日总结", "AI 看盘", "AI 政策分析", "AI 政策深度",
                                              "AI 政策研报", "AI 板块机会")]
         self.assertEqual(positions, sorted(positions))
-        self.assertLess(out.index("AI 板块机会"), out.index("AI 看盘"))
 
     def test_build_html_renders_deep_layer_blocks(self):
         brief = {name: sources._demo_items(name) for name in sources.SOURCES}
@@ -1284,9 +1283,30 @@ class BuildHtmlTest(unittest.TestCase):
         # 证据要带上数据源名称
         self.assertIn("华尔街见闻 快讯", out)
         self.assertIn("基于 3 条多空信号", out)
-        # 位置：紧跟「AI 每日总结」，在「AI 看盘」之前（开头 AI 部分）。
+        # 位置：在「AI 每日总结」「AI 看盘」之后、「全网快讯」之前（开头 AI 部分）。
         self.assertLess(out.index("AI 每日总结"), out.index("AI 板块机会"))
-        self.assertLess(out.index("AI 板块机会"), out.index("AI 看盘"))
+        self.assertLess(out.index('<span class="tag">AI 看盘</span>'), out.index("AI 板块机会"))
+        self.assertLess(out.index("AI 板块机会"), out.index("全网快讯"))
+
+    def test_build_html_places_kanpan_right_after_daily_summary(self):
+        # 「AI 看盘」紧跟「AI 每日总结」之后：两张卡片之间不能夹任何其它卡片，
+        # 其后才是「AI 情绪热力图 → AI 政策分析 → … → AI 板块机会 → 全网快讯」。
+        brief = {name: sources._demo_items(name) for name in sources.SOURCES}
+        out = sources.build_html(brief, **self._kanpan())
+
+        def at(label: str) -> int:
+            return out.index(f'<span class="tag">{label}</span>')
+
+        order = ["AI 每日总结", "AI 看盘", "AI 情绪热力图", "AI 政策分析", "AI 政策深度",
+                 "AI 政策研报", "AI 板块机会", "全网快讯"]
+        positions = [at(label) for label in order]
+        self.assertEqual(positions, sorted(positions), "板块顺序应为 " + " → ".join(order))
+        between = out[at("AI 每日总结"):at("AI 看盘")]
+        self.assertEqual(between.count('<div class="card">'), 1, "每日总结与看盘之间不应再夹其它卡片")
+        # 三个市场在同一张看盘卡里，且都排在热力图之前。
+        for market in ("A 股", "港股", "美股"):
+            self.assertLess(at("AI 看盘"), out.index(f'<span class="tag">{market}</span>'))
+            self.assertLess(out.index(f'<span class="tag">{market}</span>'), at("AI 情绪热力图"))
 
     def test_build_html_opportunity_card_honest_when_no_signals(self):
         out = sources.build_html({}, **self._kanpan())
@@ -1682,8 +1702,10 @@ class AshareReviewTest(unittest.TestCase):
         out = sources.build_html(brief, review=review, hk_review=hk_review, us_review=us_review)
         self.assertIn("AI 看盘", out)
         # 05「数据获取与时间核对」不进入看盘正文；行情分析本身仍保留。
-        # 政策深度会写已核验发文日（其中 8 月 28 日与快照日同一天），不能拿全文字符串当看盘日期泄漏的判据。
-        kanpan = out[out.index("AI 看盘"):]
+        # 政策深度会写已核验发文日（其中 8 月 28 日与快照日同一天），不能拿全文字符串当看盘日期泄漏的判据；
+        # 「AI 看盘」现在紧跟「AI 每日总结」、排在热力图与政策卡之前，所以只截取看盘卡本身（到下一张卡为止）。
+        kanpan_start = out.index('<span class="tag">AI 看盘</span>')
+        kanpan = out[kanpan_start:out.index('<span class="tag">AI 情绪热力图</span>', kanpan_start)]
         self.assertNotIn(sources._ASHARE_SNAPSHOT["date"], kanpan)
         self.assertNotIn("东方财富行情接口", out)
         for label in ("三大指数", "两市成交额", "涨跌家数与涨跌停",
