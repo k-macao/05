@@ -235,8 +235,8 @@ class MockedPushTest(unittest.TestCase):
                 self.assertEqual(record["path"], "/send")
                 self.assertEqual(payload["token"], "fake-token-123")
                 self.assertEqual(payload["template"], "html")
-                # 一对多推送：载荷必须带群组编码 oai.1。
-                self.assertEqual(payload["topic"], "oai.1")
+                # 默认一对一推送：载荷不带群组编码，消息只发给 token 所属账号。
+                self.assertNotIn("topic", payload)
                 self.assertIn("章鱼", payload["title"])
                 # 推送内容为真实抓取五大板块数据源的 HTML 简报（网络不可用时回退演示数据）。
                 self.assertIn("章鱼", payload["content"])
@@ -275,6 +275,30 @@ class MockedPushTest(unittest.TestCase):
                 # PushPlus 拒绝（业务码非 200）→ server.py 应返回 502 并透出原因。
                 self.assertEqual(status, 502)
                 self.assertIn("token invalid", json.loads(raw)["message"])
+            finally:
+                srv.terminate(); srv.wait(timeout=5)
+                mock.terminate(); mock.wait(timeout=5)
+
+    def test_push_group_topic_only_when_configured(self):
+        # 显式配置 PUSHPLUS_TOPIC 才切回一对多推送：载荷带群组编码。
+        mock_port, srv_port = free_port(), free_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            record_file = os.path.join(tmp, "pushplus_record.json")
+            mock = start_mock(mock_port, record_file)
+            srv = start_server(srv_port, {
+                "PUSHPLUS_TOKEN": "fake-token-123",
+                "PUSHPLUS_API_URL": f"http://127.0.0.1:{mock_port}/send",
+                "MARKET_FRESHNESS_FORCE": "fresh",
+                "PUSHPLUS_TOPIC": "oai.1",
+            })
+            try:
+                status, raw = request(
+                    f"http://127.0.0.1:{srv_port}", "POST", "/api/run", body={},
+                    headers={"Content-Type": "application/json"},
+                )
+                self.assertEqual(status, 200)
+                record = json.loads(PathRead(record_file))
+                self.assertEqual(record["payload"]["topic"], "oai.1")
             finally:
                 srv.terminate(); srv.wait(timeout=5)
                 mock.terminate(); mock.wait(timeout=5)

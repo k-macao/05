@@ -5,7 +5,7 @@
     PUSHPLUS_TOKEN=xxx python3 push_brief.py
 可选：
     PUSHPLUS_API_URL=...     覆盖推送地址（测试时指向本地假 PushPlus）
-    PUSHPLUS_TOPIC=...       覆盖群组编码（默认 oai.1，一对多群组推送）
+    PUSHPLUS_TOPIC=...       群组编码（默认空 = 一对一，仅发给自己；填了才是一对多群组推送）
     MARKET_FRESHNESS_FORCE=fresh|stale  强制大盘数据检查结果（测试/应急用）
     SKIP_MARKET_CHECK=1      跳过大盘数据新鲜度检查（测试/应急用，不建议日常开启）
     SKIP_SENSITIVE_CHECK=1   跳过敏感词检测（测试/应急用，不建议日常开启）
@@ -34,8 +34,9 @@ import sensitive
 import sources
 
 API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
-# 群组编码：一对多推送目标，群成员扫码入群后均可收到；留空则退回一对一（仅发给自己）。
-TOPIC = os.environ.get("PUSHPLUS_TOPIC", "oai.1").strip()
+# 群组编码：留空（默认）= 一对一推送，消息只发给 token 所属账号自己；
+# 只有显式配置 PUSHPLUS_TOPIC=oai.1 才切回一对多群组推送（群成员扫码入群后均可收到）。
+TOPIC = os.environ.get("PUSHPLUS_TOPIC", "").strip()
 SOURCES = sources.SOURCES
 
 # PushPlus 官方返回码 → 排查建议（https://www.pushplus.plus/doc/guide/code.html）
@@ -103,7 +104,7 @@ def main():
     if TOPIC:
         print(f"诊断：本次为一对多推送（群组编码 topic={TOPIC}）", flush=True)
     else:
-        print("诊断：未配置群组编码，本次为一对一推送", flush=True)
+        print("诊断：本次为一对一推送（未配置群组编码，消息只发给自己）", flush=True)
 
     # ── 推送前检查：大盘数据必须是最新，不是最新就不推 ──
     market, freshness = sources.collect_market_for_push()
@@ -147,6 +148,7 @@ def main():
         "content": build_content(datetime.now(), review=sources.analyze_ashare(market), brief=brief),
         "template": "html",
     }
+    # 默认一对一：不带 topic 字段；只有显式配置群组编码才走一对多。
     if TOPIC:
         payload["topic"] = TOPIC
 

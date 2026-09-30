@@ -8,7 +8,7 @@
 思路：本地假 PushPlus（mock_pushplus.py）接收推送并写“假文件”，
 把 sources 的大盘采集与新闻源全部替换为本地注入，验证：
 - 大盘数据非最新 → 退出码 3，且假 PushPlus 收不到任何请求（真的没推）；
-- 大盘数据最新   → 退出码 0，假文件生成且载荷正确；
+- 大盘数据最新   → 退出码 0，假文件生成且载荷正确；默认一对一（载荷不带群组编码 topic）；
 - SKIP_MARKET_CHECK=1 → 跳过闸门照常推送（测试/应急通道）；
 - 违规快讯被 filter_brief 剔除后仍可推送；HTML 残留敏感词 → 退出码 4；
 - SKIP_SENSITIVE_CHECK / SENSITIVE_FORCE 与新鲜度闸门同一套环境变量风格。
@@ -50,6 +50,9 @@ class MarketGateTest(unittest.TestCase):
         self._orig_collect_market = sources.collect_market_for_push
         self._orig_build_html = sources.build_html
         self._orig_api_url = push_brief.API_URL
+        # 推送模式是模块级常量（import 时绑定），测试期内固定为默认的一对一。
+        self._orig_topic = push_brief.TOPIC
+        push_brief.TOPIC = ""
         sources.collect_all = _demo_brief
         self._tmp = tempfile.TemporaryDirectory()
         self.record_file = os.path.join(self._tmp.name, "pushplus_record.json")
@@ -65,10 +68,11 @@ class MarketGateTest(unittest.TestCase):
         sources.collect_market_for_push = self._orig_collect_market
         sources.build_html = self._orig_build_html
         push_brief.API_URL = self._orig_api_url
+        push_brief.TOPIC = self._orig_topic
         self._tmp.cleanup()
-        for key in ("PUSHPLUS_TOKEN", "PUSHPLUS_API_URL", "SKIP_MARKET_CHECK",
-                    "MARKET_FRESHNESS_FORCE", "SKIP_SENSITIVE_CHECK",
-                    "SENSITIVE_FORCE", "SENSITIVE_LEXICON"):
+        for key in ("PUSHPLUS_TOKEN", "PUSHPLUS_API_URL", "PUSHPLUS_TOPIC",
+                    "SKIP_MARKET_CHECK", "MARKET_FRESHNESS_FORCE",
+                    "SKIP_SENSITIVE_CHECK", "SENSITIVE_FORCE", "SENSITIVE_LEXICON"):
             os.environ.pop(key, None)
 
     def _push_once(self, fresh: bool) -> int:
@@ -99,6 +103,8 @@ class MarketGateTest(unittest.TestCase):
         with open(self.record_file, encoding="utf-8") as f:
             payload = json.load(f)["payload"]
         self.assertEqual(payload["token"], "fake-token-gate")
+        # 默认一对一推送：载荷不带群组编码。
+        self.assertNotIn("topic", payload)
         self.assertIn("章鱼", payload["title"])
         self.assertIn("AI 看盘", payload["content"])  # 看盘板块随简报一同推送
         self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送

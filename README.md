@@ -56,6 +56,8 @@ python3 -m http.server 8080
 PUSHPLUS_TOKEN=xxx python3 push_brief.py
 ```
 
+**推送默认一对一**：消息只发给 `PUSHPLUS_TOKEN` 所属账号自己，载荷不带群组编码（`topic`），无需改工作流。需要一对多群组推送时，显式设 `PUSHPLUS_TOPIC=oai.1`（群成员扫码入群后均可收到）：本地运行为 `PUSHPLUS_TOPIC=oai.1 python3 push_brief.py`，GitHub Actions 则在 `daily-push.yml` 的推送步骤 `env:` 下加 `PUSHPLUS_TOPIC: oai.1`。本地服务 `POST /api/run` 同样遵循该规则。
+
 **推送前大盘数据新鲜度检查（不是最新就不推）**：推送前会先确认简报里的「AI 看盘」A 股数据为最新——①行情接口可用（东方财富主源与腾讯证券备用源至少一个可用）；②接口数据不滞后（最新日 K 不早于内置快照基线）；③复盘数据来自实时接口（东方财富或腾讯证券备用源，非内置快照兜底）且复盘日等于最近一个可复盘交易日。任何一条不满足即放弃本次推送：`push_brief.py` 退出码 3（GitHub Actions 显示为失败，便于发现行情源异常），本地服务 `POST /api/run` 返回 409 并透出具体原因。页面「AI 看盘」标题右侧的标签实时展示该检查结果（`GET /api/market`）。
 
 **推送前敏感词检测（违规内容不推）**：对齐《网络安全法》《互联网信息服务管理办法》《网络信息内容生态治理规定》第六条。`sensitive.py` 先按条剔除违规快讯再生成 HTML，再扫描标题 + 正文；残留命中则放弃本次推送：`push_brief.py` 退出码 4，本地服务 `POST /api/run` 返回 422。词库只覆盖法规列明的违法 / 不良信息类别，**不**编造政治人物名单，也**不**把战争、制裁、Iran、立案、骗局、Ponzi、Terrorism Risk Insurance、Drug Transit、博彩股、六合彩等正常财经 / 地缘 / 监管新闻当违规。执法、驳斥口径（打击 / 查处 / 反对 / charges）视为报道放行。排障接口 `GET /api/sensitive`。详见 `docs/sensitive_filter.md`。
@@ -63,6 +65,7 @@ PUSHPLUS_TOKEN=xxx python3 push_brief.py
 相关环境变量（推送容量 / 测试 / 应急）：
 
 - `PUSHPLUS_MEMBER=0`：**推送容量口径**。默认即按 PushPlus 会员的 **10 万字** 上限生成（留 2,000 字符安全余量 → 98,000 字符，每个数据源最多 20 条）；普通/实名账号（2 万字上限）显式设为 `0` 即退回精选口径（19,500 字符 · 每源 3 条）。
+- `PUSHPLUS_TOPIC=oai.1`：**推送模式**。默认**留空 = 一对一**（只发给 token 所属账号自己）；显式填群组编码才切回一对多群组推送（GitHub Actions 需在 `daily-push.yml` 的 `env:` 下加这一行，仓库 Secrets 里存值也可以）。
 - `PUSHPLUS_MAX_CHARS=98000`：自定义单条推送字符上限（覆盖上面的会员/普通默认值；超上限时自动逐级收敛每源条数，保证发得出去）。
 - `PUSHPLUS_ITEMS_PER_SOURCE=20`：推送口径里每个数据源最多展示条数（`all` = 抓到的全部快讯）。注意：正文最后的「全网快讯」列表固定按 **每源 3 条** 输出（`sources.NEWS_ITEMS_PER_SOURCE`），该变量只能把条数往下压（如设 `1` 即每源 1 条），设成大于 3 不会让快讯列表变长——多抓的条数用于「AI 每日总结 / 板块机会 / 政策分析」的信号统计。
 - `BRIEF_FETCH_LIMIT=20`：自定义每个数据源的抓取条数（默认与展示口径一致，避免「额度放宽了但内默认与展示口径一致，避免「额度放宽了但内容没变多」）。

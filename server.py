@@ -6,6 +6,7 @@
 
 POST /api/run 推送前闸门与 ``push_brief.py`` 相同：
 大盘数据非最新 → 409；敏感词检测未通过 → 422。
+推送默认一对一（只发给 token 所属账号）；显式设 PUSHPLUS_TOPIC=oai.1 才是一对多群组推送。
 诊断：GET /api/market、GET /api/sensitive。
 """
 import json
@@ -24,8 +25,9 @@ import sources
 ROOT = Path(__file__).resolve().parent
 # 推送地址可用环境变量覆盖，默认走真实 PushPlus；测试时指向本地假服务。
 PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus/send")
-# 群组编码：一对多推送目标（默认 oai.1）；设为空字符串则退回一对一（仅发给自己）。
-PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "oai.1").strip()
+# 群组编码：留空（默认）= 一对一推送，消息只发给 token 所属账号自己；
+# 只有显式配置 PUSHPLUS_TOPIC=oai.1 才切回一对多群组推送。
+PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "").strip()
 SOURCES = sources.SOURCES
 
 # /api/brief 的结果缓存（并发抓取五大板块 49 个源仍需数秒，5 分钟内不重复抓取）。
@@ -216,6 +218,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "message": f"已取消推送：内容未通过敏感词检测——{gate.get('reason')}",
                 "sensitive": gate,
             })
+        # 默认一对一：不带 topic 字段；只有显式配置群组编码才走一对多。
         if PUSHPLUS_TOPIC:
             payload["topic"] = PUSHPLUS_TOPIC
         try:
