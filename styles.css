@@ -195,6 +195,7 @@ input:focus-visible + span { outline: 2px solid var(--green-deep); outline-offse
 }
 
 .pixel-hero h1 em { color: var(--ink); font-style: normal; text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 4px; }
+.pixel-hero h1 small { color: var(--ink-soft); font-size: 0.55em; font-weight: 700; letter-spacing: .02em; vertical-align: middle; margin-left: 4px; }
 
 .hero-copy {
   max-width: 32em;

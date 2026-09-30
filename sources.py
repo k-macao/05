@@ -5337,8 +5337,8 @@ f'<div class="ftr">近30日只统计已核验发文日的全球政策，已观�
             f'{css}<div class="bg">'
             f'<div class="card-m">'
             f'<div style="color:{neon_green};font-size:10px;margin-bottom:3px;">全网 AI 调研　/　境内 × 境外</div>'
-            f'<div style="color:{neon_green};font-size:20px;font-weight:800;">章鱼 AI 全景分析</div>'
-            f'<div style="color:#fff;font-size:11px;margin-top:4px;">全网 AI 调研境内外数据，由多个大模型混合部署。</div></div>'
+            f'<div style="color:{neon_green};font-size:20px;font-weight:800;">章鱼 AI·全景分析（市场情绪量化分析）</div>'
+            f'<div style="color:#fff;font-size:11px;margin-top:4px;">市场情绪量化分析 · 全网 AI 调研境内外数据，由多个大模型混合部署。</div></div>'
             f'<div class="card"><div class="hdr"><span class="tag">AI 每日总结</span></div><div class="txt">{headline}</div>{points_html}</div>'
             + kanpan_card
             + heatmap_card
