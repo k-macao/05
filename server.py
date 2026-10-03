@@ -30,7 +30,7 @@ PUSHPLUS_API_URL = os.environ.get("PUSHPLUS_API_URL", "https://www.pushplus.plus
 PUSHPLUS_TOPIC = os.environ.get("PUSHPLUS_TOPIC", "").strip()
 SOURCES = sources.SOURCES
 
-# /api/brief 的结果缓存（并发抓取五大板块 49 个源仍需数秒，5 分钟内不重复抓取）。
+# /api/brief 的结果缓存（并发抓取六大板块 69 个源仍需数秒，5 分钟内不重复抓取）。
 _BRIEF_CACHE = {"at": 0.0, "data": None}
 _BRIEF_TTL = 300
 # /api/market 与推送闸门共用的大盘数据缓存（东方财富日 K + 新鲜度检查）。
@@ -87,7 +87,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/sources":
             return self.send_json(HTTPStatus.OK, SOURCES)
         if path == "/api/sections":
-            # 板块目录：[{key, label, note, sources, count}]，五大板块与各自的数据源清单。
+            # 板块目录：[{key, label, note, sources, count}]，六大板块与各自的数据源清单。
             return self.send_json(HTTPStatus.OK, sources.section_catalog())
         if path == "/api/sensitive":
             # 敏感词检测诊断：与推送闸门同一套词库，只扫不改，供排障。
@@ -192,7 +192,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "sensitive": gate,
             })
 
-        # 真实抓取五大板块全部数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
+        # 真实抓取六大板块全部数据源并生成 HTML 简报（网络不可用时自动回退内置演示数据）。
         try:
             brief = get_brief()
         except Exception:

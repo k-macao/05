@@ -121,11 +121,12 @@ class ServerSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(len(data), 1)
 
     def test_sections_returns_catalog(self):
-        # 五大板块目录：key / label / sources，源清单合计等于 /api/sources。
+        # 六大板块目录：key / label / sources，源清单合计等于 /api/sources。
         status, raw = request(self.base, "GET", "/api/sections")
         self.assertEqual(status, 200)
         data = json.loads(raw)
-        self.assertEqual([sec["key"] for sec in data], ["finance", "trending", "policy", "world", "civic"])
+        self.assertEqual([sec["key"] for sec in data],
+                         ["finance", "trending", "community", "policy", "world", "civic"])
         _status, raw_sources = request(self.base, "GET", "/api/sources")
         all_sources = json.loads(raw_sources)
         self.assertEqual([n for sec in data for n in sec["sources"]], all_sources)
@@ -238,7 +239,7 @@ class MockedPushTest(unittest.TestCase):
                 # 默认一对一推送：载荷不带群组编码，消息只发给 token 所属账号。
                 self.assertNotIn("topic", payload)
                 self.assertIn("章鱼", payload["title"])
-                # 推送内容为真实抓取五大板块数据源的 HTML 简报（网络不可用时回退演示数据）。
+                # 推送内容为真实抓取六大板块数据源的 HTML 简报（网络不可用时回退演示数据）。
                 self.assertIn("章鱼", payload["content"])
                 self.assertIn("数据源", payload["content"])
                 self.assertIn("AI 板块机会", payload["content"])  # 板块机会清单随简报一同推送

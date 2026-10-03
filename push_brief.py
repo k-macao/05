@@ -60,7 +60,7 @@ PUSHPLUS_ERROR_HINTS = {
 
 
 def collect_brief():
-    """真实抓取五大板块全部数据源（网络不可用时自动回退内置演示数据）。"""
+    """真实抓取六大板块全部数据源（网络不可用时自动回退内置演示数据）。"""
     try:
         return sources.collect_all()
     except Exception:

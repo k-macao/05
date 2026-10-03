@@ -916,6 +916,45 @@ footer strong { display: block; color: var(--ink); text-align: center; font-size
   word-break: break-all;
   margin-bottom: 10px;
 }
+.etf-pair {
+  margin-bottom: 10px;
+  border: 1px solid var(--black);
+  background: var(--paper);
+}
+.etf-leg {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border-bottom: 1px dashed var(--rule);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.etf-leg:last-of-type { border-bottom: 0; }
+.etf-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  background: var(--black);
+  color: var(--green);
+  font: 700 10px/1 var(--mono);
+}
+.etf-leg b { font-family: var(--mono); }
+.etf-leg small {
+  display: block;
+  margin-top: 1px;
+  color: var(--ink-soft);
+  font-size: 9px;
+  word-break: break-word;
+}
+.etf-mapping {
+  padding: 6px 8px;
+  color: var(--ink-soft);
+  font-size: 9px;
+  line-height: 1.5;
+}
 .heatmap-empty {
   grid-column: 1 / -1;
   padding: 18px;
