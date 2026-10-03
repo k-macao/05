@@ -55,15 +55,25 @@ class ParseChannelTest(unittest.TestCase):
 
 
 class SourceDefinitionTest(unittest.TestCase):
-    def test_forty_nine_sources_in_five_sections(self):
-        # 12 财经快讯 + 6 热搜热点 + 15 政策发布 · 官方信息源 + 12 全球政经媒体 + 4 公民科技 · 政治透明度。
-        self.assertEqual(len(sources.SOURCES), 49)
-        self.assertEqual(len(sources.SOURCE_META), 49)
-        self.assertEqual(len(set(sources.SOURCES)), 49, "数据源名称必须唯一")
+    def test_sixty_nine_sources_in_six_sections(self):
+        # 原 49 源 + 20 个财经社区；社区覆盖中英文及多种投资类型。
+        self.assertEqual(len(sources.SOURCES), 69)
+        self.assertEqual(len(sources.SOURCE_META), 69)
+        self.assertEqual(len(set(sources.SOURCES)), 69, "数据源名称必须唯一")
         names = [m["name"] for m in sources.SOURCE_META]
         self.assertEqual(names, sources.SOURCES)
         counts = {sec["key"]: sec["count"] for sec in sources.section_catalog()}
-        self.assertEqual(counts, {"finance": 12, "trending": 6, "policy": 15, "world": 12, "civic": 4})
+        self.assertEqual(counts, {"finance": 12, "trending": 6, "community": 20,
+                                  "policy": 15, "world": 12, "civic": 4})
+
+    def test_twenty_communities_are_bilingual_and_diverse(self):
+        community = [m for m in sources.SOURCE_META if m.get("section") == "community"]
+        self.assertEqual(len(community), 20)
+        self.assertEqual({m.get("language") for m in community}, {"zh", "en"})
+        self.assertEqual(sum(m.get("language") == "zh" for m in community), 8)
+        self.assertEqual(sum(m.get("language") == "en" for m in community), 12)
+        self.assertGreaterEqual(len({m.get("community_type") for m in community}), 18)
+        self.assertTrue(all(m.get("community_type") for m in community))
 
     def test_every_source_has_a_fetch_method(self):
         for meta in sources.SOURCE_META:
@@ -128,11 +138,12 @@ _SAMPLE_GOV_HTML = """
 
 
 class SectionTest(unittest.TestCase):
-    """五大板块：板块目录、按板块抓取、通用 RSS·Atom / 列表页抓取器、公民科技 JSON 解析、快讯分组渲染。"""
+    """六大板块：板块目录、按板块抓取、通用 RSS·Atom / 列表页抓取器、公民科技 JSON 解析、快讯分组渲染。"""
 
     def test_section_catalog(self):
         catalog = sources.section_catalog()
-        self.assertEqual([sec["key"] for sec in catalog], ["finance", "trending", "policy", "world", "civic"])
+        self.assertEqual([sec["key"] for sec in catalog],
+                         ["finance", "trending", "community", "policy", "world", "civic"])
         self.assertEqual(sum(sec["count"] for sec in catalog), len(sources.SOURCES))
         labels = [sec["label"] for sec in catalog]
         # 板块名不能与任何数据源名相同，否则「全网快讯」分组标题会暴露来源。
@@ -140,6 +151,7 @@ class SectionTest(unittest.TestCase):
             self.assertNotIn(label, sources.SOURCES)
         self.assertEqual(sources.section_of("国务院 最新政策"), "policy")
         self.assertEqual(sources.section_of("Bloomberg 政治"), "world")
+        self.assertEqual(sources.section_of("Reddit r/investing"), "community")
         self.assertEqual(sources.section_of("g0v 立法院議案"), "civic")
         self.assertEqual(sources.section_of("金十数据"), "finance")
         self.assertEqual(sources.section_of("未登记的源"), "finance")
@@ -417,6 +429,54 @@ class AnalyzeBriefTest(unittest.TestCase):
         self.assertEqual(ana["sectors_down"], [])
         battle = next(p["text"] for p in ana["points"] if p["key"] == "battle")
         self.assertIn("暂无", battle)
+
+
+class HKEtfPairTest(unittest.TestCase):
+    """每个 AI 关键词都只能输出两个现有港股 ETF，并带对应指数 / 参考标的。"""
+
+    def test_every_theme_keyword_has_exactly_two_hk_etfs(self):
+        for tag, keywords in sources._THEMES:
+            for raw in keywords:
+                keyword = sources._heatmap_display(raw)
+                pair = sources.hk_etf_pair(keyword, tag)
+                self.assertEqual(len(pair), 2, (tag, keyword))
+                self.assertEqual(len({item["code"] for item in pair}), 2, (tag, keyword))
+                for item in pair:
+                    self.assertRegex(item["code"], r"^\d{5}\.HK$")
+                    self.assertIn(item["code"], sources._HK_ETF_CATALOG)
+                    self.assertTrue(item["name"])
+                    self.assertTrue(item["benchmark"])
+                    self.assertTrue(item["mapping"])
+
+    def test_precise_keyword_overrides(self):
+        self.assertEqual([x["code"] for x in sources.hk_etf_pair("原油", "贵金属")],
+                         ["03097.HK", "03175.HK"])
+        self.assertEqual([x["code"] for x in sources.hk_etf_pair("数据中心", "AI 算力")],
+                         ["02826.HK", "03140.HK"])
+        self.assertIn("暂无现行纯白银 ETF",
+                      sources.hk_etf_pair("白银", "贵金属")[0]["mapping"])
+
+    def test_heatmap_returns_structured_pair_not_a_share_stocks(self):
+        heatmap = sources.analyze_keyword_heatmap({"金十数据": [
+            {"title": "AI 数据中心投资上涨，原油价格回升", "url": ""},
+            {"title": "半导体芯片需求超预期", "url": ""},
+        ]})
+        self.assertTrue(heatmap["keywords"])
+        legacy_stocks = ("浪潮信息", "中际旭创", "科大讯飞", "北方华创", "贵州茅台")
+        for keyword in heatmap["keywords"]:
+            self.assertEqual(len(keyword["etf_pair"]), 2)
+            self.assertIn("港股 ETF 双标的", keyword["concept"])
+            self.assertIn("对应标的：", keyword["etf_pair_text"])
+            self.assertTrue(all(name not in keyword["reading"] for name in legacy_stocks))
+
+    def test_sector_opportunity_also_contains_pair(self):
+        analysis = sources.analyze_brief({"金十数据": [
+            {"title": "AI 算力投资上涨超预期", "url": ""},
+        ]})
+        self.assertTrue(analysis["opportunity_sectors"])
+        entry = analysis["opportunity_sectors"][0]
+        self.assertEqual(len(entry["etf_pair"]), 2)
+        self.assertIn("对应标的：", entry["etf_pair_text"])
 
 
 class SectorOpportunityTest(unittest.TestCase):
@@ -1406,8 +1466,10 @@ class BuildHtmlTest(unittest.TestCase):
             }
             out = sources.build_html(huge_brief, **self._kanpan())
             self.assertLessEqual(len(out), 19500)
-            # 快讯列表仍然在正文最后，且每源只保留 3 条。
-            self.assertIn("全网快讯", out)
+            # 69 源的超长唯一标题在免费额度下允许按最后档位省略；核心分析必须保留。
+            self.assertIn("AI 板块机会", out)
+            self.assertNotIn("全网快讯", out)
+            # 跨源同题会去重成 3 条，能放下时仍保留正文最后的精选快讯。
             brief = {name: [{"title": f"免费口径快讯第 {i} 条", "url": ""} for i in range(8)]
                      for name in sources.SOURCES}
             out2 = sources.build_html(brief, **self._kanpan())
@@ -1447,7 +1509,7 @@ class BuildHtmlTest(unittest.TestCase):
         self.assertIn("唯一原始标题", out)
         self.assertNotIn("覆盖 18 个数据源", out)
         self.assertNotIn('class="td-n td-bdr"', out)
-        # 49 源 × 3 条 = 147 行，编号全表连续且不带来源名；按五大板块分组。
+        # 69 源 × 3 条 = 207 行，编号全表连续且不带来源名；按六大板块分组。
         total = len(sources.SOURCES) * 3
         news_card = out[out.index("全网快讯"):]
         self.assertEqual(news_card.count("唯一原始标题"), total)
@@ -1458,7 +1520,7 @@ class BuildHtmlTest(unittest.TestCase):
             self.assertNotIn(name, card)
         for sec in sources.SECTIONS:
             self.assertIn(sec["label"], card)
-        self.assertIn("5 个板块", card)
+        self.assertIn("6 个板块", card)
 
     def test_build_html_custom_max_chars_shrinks_items(self):
         # 自定义较小上限时仍保证生成内容不超出推送限制。

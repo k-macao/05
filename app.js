@@ -63,11 +63,11 @@ document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
 });
 
 /* ===================== AI 情绪热力图 · 关键词级线索（面向股市投资） =====================
-   热力图以关键词为单元，每个格子可下钻查看该词的 9 维指标与投资提示（线索列表不展示）。
+   热力图以关键词为单元，每个格子可下钻查看该词的 9 维指标、两个港股 ETF 及对应指数（线索列表不展示）。
    指标体系（9 维，全部可复算）：
      热度(0-100)=提及×(1+ln(跨源+1))归一 · 情绪分(-1~+1)=(多-空)/信号 · 净信号 · 跨源共振
      分歧度=1-|情绪| · 爆发=热度×|情绪| · 资金倾向(流入/流出/观望) · 评级(强多/偏多/中性/偏空/强空)
-     风险(低/中/高) · 置信度；并关联概念映射与政策维度，便于产业链推演。
+     风险(低/中/高) · 置信度；并关联港股 ETF 双标的、对应指数与政策维度，便于主题推演。
    数据来自 /api/heatmap（与 AI 每日总结同批标题、零外部依赖、可离线）。
 */
 (function(){
@@ -170,6 +170,12 @@ document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
       el.classList.toggle('selected', el.dataset.keyword===kw.keyword);
     });
     const policyTags=(kw.policy_tags||[]).length ? kw.policy_tags.map(t=>`<span class="badge neutral">${esc(t)}</span>`).join('') : '<span style="color:var(--ink-soft);font-size:10px;">无关联政策维度</span>';
+    const etfPair=Array.isArray(kw.etf_pair) ? kw.etf_pair : [];
+    const etfPairHtml=etfPair.length===2 ? `
+      <div class="etf-pair" aria-label="港股 ETF 双标的">
+        ${etfPair.map((etf,index)=>`<div class="etf-leg"><span class="etf-no">0${index+1}</span><div><b>${esc(etf.code)}</b> ${esc(etf.name)}<small>对应标的：${esc(etf.benchmark)}</small></div></div>`).join('')}
+        <div class="etf-mapping">映射口径：${esc(etfPair[0].mapping||'主题相关指数')} · 仅作主题观察，不构成投资建议</div>
+      </div>` : `<div class="etf-pair"><div class="etf-mapping">港股 ETF 双标的数据暂不可用</div></div>`;
     drawerEl.hidden=false;
     drawerEl.innerHTML=`
       <div class="drawer-head">
@@ -189,6 +195,8 @@ document.querySelectorAll('.pixel-switch input[data-toggle]').forEach(input=>{
         <span class="badge neutral">分歧${kw.divergence}</span>
       </div>
       <div class="drawer-reading">${esc(kw.reading)}</div>
+      <div style="margin:8px 0 4px;font-size:11px;font-weight:700;">港股 ETF 双标的</div>
+      ${etfPairHtml}
       <div style="margin-bottom:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><span style="font-size:11px;font-weight:700;">关联政策维度：</span> ${policyTags}</div>
       <div style="margin-bottom:4px;font-size:11px;font-weight:700;">投资提示：<span style="font-weight:400;color:var(--ink-soft);">${esc(kw.hint)}</span></div>
       <div style="margin:8px 0 4px;font-size:10px;color:var(--ink-soft);">线索列表（标题/来源/时间/情绪标签）不展示；完整数据见 /api/heatmap 接口。仅统计信号，不构成投资建议。</div>
